@@ -136,7 +136,7 @@ assert.equal(projectTeamView({ members: [], tasks: [], failure: 'bad row' }).fai
 const store = new TeamStore()
 const feed = createTeamFeed(store)
 const leadSession = { id: 'session-lead' }
-const teammateSession = { id: 'session-rev', subagent: { address: { parentSessionId: 'session-lead' } } }
+const teammateSession = { id: 'session-rev', header: { parentSession: 'session-lead' }, subagent: { address: { parentSessionId: 'session-lead' } } }
 let storeNotifications = 0
 const off = store.subscribe(() => { storeNotifications += 1 })
 
@@ -196,7 +196,22 @@ assert.equal(storeNotifications, beforeOff, 'an unsubscribed listener is never c
 
 assert.equal(leadSessionIdOf(teammateSession), 'session-lead')
 assert.equal(leadSessionIdOf(leadSession), 'session-lead')
-assert.equal(leadSessionIdOf(undefined), undefined)
+assert.equal(leadSessionIdOf(undefined), undefined,
+  'a missing session resolves nothing')
+// The REAL Session shape, and the field the official kernel itself walks:
+// `header.parentSession`. Reading the subagent catalog's field instead (or
+// nothing at all) silently returns the teammate's OWN id, whose log carries no
+// team — which is exactly the "panel turns into the subagent dashboard as soon
+// as you open a member" bug. Pin both, and pin that the header wins.
+assert.equal(leadSessionIdOf({ id: 'session-rev', header: { parentSession: 'session-lead' } }), 'session-lead',
+  'a real teammate Session resolves to its Lead through header.parentSession')
+assert.equal(leadSessionIdOf({ id: 'session-rev', header: {} }), 'session-rev',
+  'a root Session resolves to itself')
+assert.equal(
+  leadSessionIdOf({ id: 'session-rev', header: { parentSession: 'session-lead' }, subagent: { address: { parentSessionId: 'session-other' } } }),
+  'session-lead',
+  'the session header is authoritative over the subagent catalog record',
+)
 
 // ── 4. inbox ────────────────────────────────────────────────────────────────
 

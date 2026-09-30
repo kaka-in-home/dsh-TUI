@@ -492,9 +492,19 @@ export function createTeamStore(ctx: Context): TeamStore {
  * Resolve the session whose log owns the team for one visible session.
  *
  * The team projection lives in the Lead (root) session's log only, so a
- * teammate's own session carries none. The official Web UI does exactly this
- * walk (`subagent.address.parentSessionId ?? sessionId`); the TUI reads the
- * same field off the session header, and falls back to the session itself.
+ * teammate's own session carries none: reading it would find no team and the
+ * panel would fall back to the subagent dashboard while the user is looking at
+ * a member of a live team.
+ *
+ * The authoritative field is `session.header.parentSession` — that is the one
+ * the official kernel itself walks (`tryMembership` and the runtime sweep in
+ * `@deepseek-ai/dsh-experimental-agent-team`), and it is what a DSH Session
+ * actually carries. `subagent.address.parentSessionId` is only the subagent
+ * CATALOG's own record of the same edge, so it is kept as a fallback for
+ * harnesses that hand in a catalog entry instead of a Session.
+ *
+ * Getting this wrong is silent: the fallback returns the viewed session's own
+ * id, which for a teammate points at a log with no team in it.
  * @param session - Session being viewed, or its header.
  * @returns the Lead session id to read team state from.
  */
@@ -502,9 +512,11 @@ export function leadSessionIdOf(session: unknown): string | undefined {
   if (session === null || session === undefined) return undefined
   const record = session as {
     readonly id?: unknown
+    readonly header?: { readonly parentSession?: unknown }
     readonly subagent?: { readonly address?: { readonly parentSessionId?: unknown } }
   }
-  const parent = record.subagent?.address?.parentSessionId
-  if (typeof parent === 'string' && parent.length > 0) return parent
+  for (const candidate of [record.header?.parentSession, record.subagent?.address?.parentSessionId]) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate
+  }
   return typeof record.id === 'string' ? record.id : undefined
 }
