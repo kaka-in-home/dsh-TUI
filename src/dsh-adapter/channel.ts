@@ -611,15 +611,28 @@ function createChannelWithOwner(
     if (teamInbox !== undefined) teamInbox.setCurrentSession(leadId)
     if (teamStore === undefined || leadId === undefined) return
     const attachedId = String((session as { id: unknown }).id)
-    if (attachedId !== leadId) {
-      const agents = ctx.get('agents') as { get(id: string): { session?: unknown } | undefined } | undefined
-      const lead = agents?.get(leadId)
-      if (lead?.session !== undefined) teamStore.seed(lead.session)
+    // Reading team state must never take the app down. This runs inside a store
+    // SUBSCRIPTION (the subagent projection's), so a throw here is uncaught and
+    // ends the process — the launcher then offers safe mode. A failed read is a
+    // degraded panel, not a fatal condition, so it is reported and swallowed.
+    try {
+      if (attachedId !== leadId) {
+        const agents = ctx.get('agents') as { get(id: string): { session?: unknown } | undefined } | undefined
+        const lead = agents?.get(leadId)
+        if (lead?.session !== undefined) teamStore.seed(lead.session)
+      }
+      const next = teamStore.get(leadId)
+      if (next === state.team) return
+      state.team = next
+      state.emit()
+    } catch (error) {
+      ctx.logger?.warn?.(
+        'dsh-tui: team state read failed for %s (%s): %o',
+        leadId,
+        attachedId === leadId ? 'self' : 'lead walk',
+        error,
+      )
     }
-    const next = teamStore.get(leadId)
-    if (next === state.team) return
-    state.team = next
-    state.emit()
   }
 
   /** Panel refresh: re-read from the host registry, then publish. */
