@@ -18,6 +18,7 @@ import { logForDebugging } from '../../utils/debug.js'
 import { cleanRenderText } from '../sanitize.js'
 import { NOTICE_CELLS } from './decisions.js'
 import { markChannelReadDirty } from '../../adapter/channel/read-view.js'
+import type { TeamInboxStore } from '../team-inbox.js'
 import {
   buildQuestionRecord,
   parseQuestionRecordAnswers,
@@ -41,6 +42,10 @@ interface ProjectionDependencies {
  /** What a submitted message's IDE selection attached (keyed by the message
   *  id the durable event carries), for the user row's indicator line. */
  selectionAttached(messageId: string): SelectionAttachment | undefined
+ /** Agent-Team inbox: folds this session's own `team-message` sourced
+  *  deliveries so the panel can list what teammates actually sent. Absent in
+  *  compositions without the team store. */
+ teamInbox?: Pick<TeamInboxStore, 'noteEvent' | 'lastSender'>
 }
 /** One authoritative reducer for both durable replay and live session events. */
 export function createChannelProjection(state: ProjectionState, deps: ProjectionDependencies) {
@@ -585,6 +590,23 @@ export function createChannelProjection(state: ProjectionState, deps: Projection
         // `goal/change` event admitted above).
         if ((event.data.source as { kind: string }).kind === 'goal') {
           applyGoalEvent(event)
+          break
+        }
+        // Agent-Team peer delivery: the Team kernel stamps a `team-message`
+        // source on the `user/message` it injects into the TARGET session.
+        // The durable event is the delivery record, so the inbox folds it
+        // here — no mailbox polling, no second source of truth.
+        if ((event.data.source as { kind: string }).kind === 'team-message') {
+          // A live delivery is announced (the peer message is otherwise
+          // invisible: it is not a human turn, so it never becomes a
+          // transcript bubble); a replayed one is folded silently.
+          const recorded = deps.teamInbox?.noteEvent(event.data, { silent: replaying }) === true
+          if (recorded && !replaying) {
+            const sender = deps.teamInbox?.lastSender()
+            if (sender !== undefined) {
+              deps.notify(t('team-message-in', { name: sender }), { timeoutMs: 5000 })
+            }
+          }
           break
         }
         // Injected context (plugin/skill source) is not a human bubble; v1

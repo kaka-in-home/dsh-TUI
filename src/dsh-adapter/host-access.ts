@@ -317,7 +317,18 @@ function guardRootCapabilities(root: Context): void {
   const rootFiber = rootFibers.get(root as object)
   if (rootFiber !== undefined && !guardedRootFibers.has(rootFiber)) {
     guardedRootFibers.add(rootFiber)
-    guardFiberMethod(rootFiber, 'effect', root, 'root.effect')
+    // `root.effect` stays OPEN. It only appends a cleanup callback to the root
+    // fiber's own effect list, and every official plugin legitimately needs it:
+    // the Agent Teams kernel registers its session-projection unit exactly that
+    // way (`ctx.effect(() => ctx.root.sessionProjections.register(...))` in
+    // `@deepseek-ai/dsh-experimental-agent-team`), because a projection unit is
+    // owned by the HOST-plane registry while the kernel that publishes the
+    // value lives in its own realm. Guarding it made the official Agent Teams
+    // layer permanently unusable: the registry reported the kernel row as
+    // `never started` and the mount failed (observed 2026-09-30, cordis 4.0.4 +
+    // dsh 0.2.0-rc.2). The three lifecycle capabilities below stay guarded:
+    // restart/dispose/update act on the composition ROOT itself and no preset
+    // row has a reason to call them.
     guardFiberMethod(rootFiber, 'restart', root, 'root.fiber.restart')
     guardFiberMethod(rootFiber, 'dispose', root, 'root.fiber.dispose')
     guardFiberMethod(rootFiber, 'update', root, 'root.fiber.update')

@@ -1,5 +1,5 @@
 /** Host-owned in-process Channel contract. No runtime or upstream imports. */
-import type { ChatRow, AgentStatus, TokenUsage, SessionCostByModel, SubagentCostEntry, NotificationItem, ChannelGoal, TodoPanelItem, LoadedContext, PendingMessage, ChannelSceneMetadata, SubagentState, SubagentControl, BackgroundJobState, JobControl, StagedImageInput, StagedImageHandle, ComposerImageRef, ComposerSubmission, ExternalCommandOutcome, TranscriptImage, ResumeResult, EffortOption, PermissionPresetSnapshot, PresetOption, LlmModelInfo, LlmProviderInfo, SkillInfo, CredentialStatus, AgentViewRow, AgentViewDispatchResult, BackgroundResult, RawTrajEvent, ChannelSelection, CompactionStatus } from './channel-view.js'
+import type { ChatRow, AgentStatus, TokenUsage, SessionCostByModel, SubagentCostEntry, NotificationItem, ChannelGoal, TodoPanelItem, LoadedContext, PendingMessage, ChannelSceneMetadata, SubagentState, SubagentControl, BackgroundJobState, JobControl, StagedImageInput, StagedImageHandle, ComposerImageRef, ComposerSubmission, ExternalCommandOutcome, TranscriptImage, ResumeResult, EffortOption, PermissionPresetSnapshot, PresetOption, LlmModelInfo, LlmProviderInfo, SkillInfo, CredentialStatus, AgentViewRow, AgentViewDispatchResult, BackgroundResult, RawTrajEvent, ChannelSelection, CompactionStatus, TeamView, TeamMessageRow} from './channel-view.js'
 import type { SpinnerMode, ToolBackground, ScrollGutterMode, PageMarginSetting, StatusBarConfig, SessionModeSpec, SplashFontSetting, JobGroupFoldMode } from './channel-display.js'
 import type { LocalCommand, CommandCompletion, BalanceResult, FileCandidate, RecapOutcome } from './channel-catalog.js'
 import type { TuiRewindMode, SessionTreeData, SessionSummary, PreviewEntry, ForeignSource, ForeignSessionRow, ForeignImportOutcome } from './channel-session.js'
@@ -292,6 +292,24 @@ export interface ChannelUi {
    * the status-line chip.
    */
   readonly backgroundJobs: readonly BackgroundJobState[]
+  /**
+   * Agent-Team value for the session on screen, read from the official
+   * `agentTeam` Session projection (the Team kernel publishes it; this app
+   * folds nothing itself). `undefined` when no team plugin is mounted or the
+   * session carries no team.
+   */
+  readonly team: TeamView | undefined
+  /**
+   * Teammate messages this session received, folded from its own durable
+   * `user/message` events with source `team-message`. Oldest first.
+   */
+  readonly teamMessages: readonly TeamMessageRow[]
+  /**
+   * Teammate messages folded since the inbox was last opened. Drives the
+   * unread marking on the status-line chip; the messages themselves are
+   * {@link teamMessages}.
+   */
+  readonly teamUnread: number
   /** Cancellation of a background job with the owning agent's authority. */
   readonly jobControl: JobControl
   subscribe: (listener: () => void) => () => void
@@ -432,6 +450,15 @@ export interface ChannelUi {
   /** The preset the CURRENT session runs under (issue #8), resolved from its
    *  log at create/resume time; undefined when no roster is mounted. */
   readonly agentPreset: string | undefined
+  /**
+   * Re-read the team value for the session on screen from the host projection
+   * registry. A projection value only arrives when it CHANGES, so a panel
+   * opened on a session that has not published since this process booted
+   * (a fresh resume) needs this read to fill in.
+   */
+  refreshTeamProjection(): void
+  /** Mark the teammate inbox as read (the panel opened, or its page was shown). */
+  markTeamRead(): void
   /** The roster's presets for the `/preset` picker (empty without a roster). */
   listPresets(): Promise<readonly PresetOption[]>
   /** Switch the agent preset (`/preset`): a blank session swaps composition

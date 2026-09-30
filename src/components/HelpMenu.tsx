@@ -56,6 +56,9 @@ export function HelpMenu({
         <Text dimColor>{t('help-search-history', { key: primaryComboString('history') })}</Text>
       </Box>
       <Box>
+        <Text dimColor>{t('help-open-team', { key: primaryComboString('dashboard') })}</Text>
+      </Box>
+      <Box>
         <Text dimColor>{t('help-interrupt')}</Text>
       </Box>
       <Box>

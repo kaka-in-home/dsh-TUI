@@ -496,8 +496,8 @@ export const SHORTCUT_FIELD_META: Record<ShortcutActionId, { label: string; zh: 
     hintZh: d => `打开轨迹场景。默认 ${d}。`,
   },
   dashboard: {
-    label: 'Subagent dashboard shortcut',
-    zh: '子代理面板快捷键',
+    label: 'Agent panel shortcut',
+    zh: 'Agent 面板快捷键',
     hintEn: d => `Open the subagent dashboard. Default: ${d}.`,
     hintZh: d => `打开子代理面板。默认 ${d}。`,
   },

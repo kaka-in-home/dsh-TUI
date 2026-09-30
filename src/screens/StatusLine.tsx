@@ -7,6 +7,7 @@ import { formatContextUsage, DEFAULT_STATUS_BAR, normalizeStatusBar, type Status
 import { estimateSessionCostSnapshotCny, isDeepSeekOfficialProvider, isPeakHour } from '../deepseekPricing.js'
 import { ActivityLine, contextPressurePct, type ActivityLineValue } from '../components/ActivityLine.js'
 import { GoalStatusChip } from '../components/GoalTodoPanel.js'
+import { teammateCount } from '../dsh-adapter/team-store.js'
 import { formatJobDuration, type BackgroundJobState } from '../dsh-adapter/jobs.js'
 
 /** Stable fallback for stubbed channels: verify/repro harnesses render the
@@ -87,6 +88,7 @@ type HoverTarget =
   | 'cost'
   | 'goal'
   | 'jobs'
+  | 'team'
   | 'model'
   | 'git'
   | 'sessionId'
@@ -345,11 +347,48 @@ const selectionBadge = formatSelectionBadge(channel.selection)
           </Text>
         ),
       }
+  // Agent-Team chip: teammates (and open shared tasks) of the team rooted at
+  // this session. Shown only while a team exists — Claude Code's agent view
+  // is a whole screen, so the in-conversation surface here is deliberately a
+  // single compact chip that answers a hover with the roster.
+  const teamView = channel.team
+  // The same predicate the roster key routes on: the durable teammate record, so
+  // the chip and the panel can never disagree about whether a team exists.
+  const teamTeammates = teammateCount(teamView)
+  const teamOpenTasks = teamView === undefined
+    ? 0
+    : teamView.tasks.filter(task => task.status !== 'completed').length
+  const teamWorking = teamView === undefined
+    ? 0
+    : teamView.members.filter(member => member.role === 'teammate' && member.turn === 'running').length
+  const teamUnread = channel.teamUnread ?? 0
+  // The unread marking rides the chip as a separate field so a busy team never
+  // widens the roster part past what the bar can shrink.
+  const teamUnreadPart: FieldPart | undefined = teamUnread === 0
+    ? undefined
+    : {
+        key: 'teamUnread',
+        id: 'team',
+        node: <Text color="warning">{`✉ ${teamUnread}`}</Text>,
+      }
+  const teamPart: FieldPart | undefined = teamTeammates === 0
+    ? undefined
+    : {
+        key: 'team',
+        id: 'team',
+        node: (
+          <Text color={teamWorking > 0 ? 'planMode' : 'inactiveShimmer'}>
+            {'⬢ '}{teamTeammates}{teamOpenTasks > 0 ? `/${teamOpenTasks}` : ''}
+          </Text>
+        ),
+      }
   const leftFields: FieldPart[] = [
     ...(statusBar.model
       ? [{ key: 'model', id: 'model' as const, node: <Text color="inactiveShimmer">{channel.model}</Text> }]
       : []),
     ...(tpsPart !== undefined ? [tpsPart] : []),
+    ...(teamPart !== undefined ? [teamPart] : []),
+    ...(teamUnreadPart !== undefined ? [teamUnreadPart] : []),
     ...(jobsPart !== undefined ? [jobsPart] : []),
     ...contextParts,
     ...(statusBar.tokens
@@ -760,6 +799,24 @@ function buildHoverDetail(
           {dim('jobs ')}
           {shown.map(job => `${job.id} ${job.label} (${formatJobDuration(job)})`).join(' · ')}
           {rest > 0 ? ` · +${rest}` : ''}
+        </Text>
+      )
+    }
+    case 'team': {
+      const team = channel.team
+      if (team === undefined) return null
+      const working = team.members.filter(member => member.role === 'teammate' && member.turn === 'running')
+      const shown = team.members.filter(member => member.role === 'teammate').slice(0, 4)
+      const rest = team.members.filter(member => member.role === 'teammate').length - shown.length
+      const open = team.tasks.filter(task => task.status !== 'completed')
+      return (
+        <Text wrap="truncate">
+          {dim('team ')}
+          {shown.map(member => `${member.name}${member.turn === 'running' ? '*' : ''}`).join(' · ')}
+          {rest > 0 ? ` · +${rest}` : ''}
+          {` · ${working.length} working · ${open.length} open`}
+          {(channel.teamUnread ?? 0) > 0 ? ` · ${channel.teamUnread} unread` : ''}
+          {team.failure !== undefined ? ' · projection failed' : ''}
         </Text>
       )
     }

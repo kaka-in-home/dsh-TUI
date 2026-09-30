@@ -361,6 +361,12 @@ export const TIPS: readonly Tip[] = [
     en: '/preset switches the kernel agent preset: standard/ptc/minimal/cordis/liangshen',
   },
   {
+    id: 'key-roster-panel',
+    group: 'keys',
+    zh: 'Ctrl+A 打开面板：本会话有队友时是团队面板（花名册 / 共享任务 / 队友消息），否则是子代理面板',
+    en: 'Ctrl+A opens the roster view: the Agent-Team panel (roster, shared tasks, teammate messages) once this session has teammates, the subagent dashboard otherwise',
+  },
+  {
     id: 'cmd-preset-liangshen',
     group: 'commands',
     zh: '/preset liangshen 梁神模式：首轮最小工具，之后全开',

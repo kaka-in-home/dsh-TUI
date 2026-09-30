@@ -390,12 +390,42 @@
     # 0.1.7 replaces directory discovery with declarations in a registry.
     # The TUI registers the official bundle defaults only when Web has not
     # already declared them. PTC's host runtime now comes from dsh-base.
+    #
+    # The capability probe must ask BOTH anchors: this bundle is what the TUI
+    # ships as, while the profile is what the deployment installs — in a
+    # profile that pulls the registry in as a peer-side dependency (the
+    # supported layout for an out-of-tree overlay) the package resolves from
+    # the profile root, not from the bundle. Probing only the bundle would
+    # disable this row on a host that can in fact run it, and then both the
+    # whole shipped roster (standard/ptc/minimal/cordis) and the bundled
+    # presets would never register — the preset picker would come up empty.
     - id: dsh-tui-agent-preset-registry
       name: '@deepseek-ai/dsh-agent-preset-registry'
       disabled: !!js >-
         (() => {
-          const require = process.getBuiltinModule('node:module').createRequire(ctx.baseUrl)
-          try { require.resolve('@deepseek-ai/dsh-agent-preset-registry/package.json') } catch { return true }
+          const module = process.getBuiltinModule('node:module')
+          const resolvable = base => {
+            try {
+              module.createRequire(base).resolve('@deepseek-ai/dsh-agent-preset-registry/package.json')
+              return true
+            } catch { return false }
+          }
+          const profileRoot = (() => {
+            const fs = process.getBuiltinModule('node:fs')
+            const path = process.getBuiltinModule('node:path')
+            const url = process.getBuiltinModule('node:url')
+            for (const cand of [ctx.baseUrl, ctx.root?.baseUrl]) {
+              if (typeof cand !== 'string' || cand === '') continue
+              try {
+                const file = url.fileURLToPath(cand)
+                const dir = path.dirname(file).replace(/[\\/](?:cordis\.patch\.yml|cordis\.yml)$/u, '')
+                const manifest = path.join(dir, 'package.json')
+                if (fs.existsSync(manifest)) return url.pathToFileURL(manifest).href
+              } catch {}
+            }
+            return undefined
+          })()
+          if (!resolvable(ctx.baseUrl) && !(profileRoot !== undefined && resolvable(profileRoot))) return true
           return [...ctx.loader.entries()].some(entry => entry.options.id === 'agent-preset-registry' && entry.options.name === '@deepseek-ai/dsh-agent-preset-registry' && !entry.disabled)
         })()
       config:

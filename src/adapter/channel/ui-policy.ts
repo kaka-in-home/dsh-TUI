@@ -114,6 +114,8 @@ export const CHANNEL_UI_EFFECTS = Object.freeze({
   'agentViewRows': 'read-only',
   'subscribeAgentView': 'subscribe',
   'dispatchBackgroundAgent': 'mutate',
+  'refreshTeamProjection': 'read-only',
+  'markTeamRead': 'mutate',
   'stopBackgroundAgent': 'mutate',
   'attachToAgent': 'mutate',
   'peekAgentSession': 'read-only',
@@ -194,6 +196,12 @@ export const CHANNEL_UI_PROPERTIES = [
   'subagentControl',
   'backgroundJobs',
   'jobControl',
+  // Agent-Team read face: the official `agentTeam` projection for the session
+  // on screen, the durable teammate messages folded from its own log, and the
+  // unread counter the status-line chip shows. All three are observations.
+  'team',
+  'teamMessages',
+  'teamUnread',
   'mode',
   'modeIndex',
   'agentPreset',

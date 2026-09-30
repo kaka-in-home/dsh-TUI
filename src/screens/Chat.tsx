@@ -26,7 +26,7 @@ import {
 } from '../modelGroups.js'
 import { readModelRecents, recordModelUse, type ModelRecentsRef } from '../modelRecents.js'
 import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
-import { sessionCwdMatches, type ChatRow, type ComposerImageRef, type EffortOption, type ExternalCommandOutcome, type PermissionPresetSnapshot, type PresetOption, type SkillInfo } from '../dsh-adapter/channel.js'
+import { sessionCwdMatches, type ChatRow, type ComposerImageRef, type EffortOption, type ExternalCommandOutcome, type PermissionPresetSnapshot, type PresetOption, type SkillInfo, type TeamMemberRow } from '../dsh-adapter/channel.js'
 import type { QuestionStore } from '../dsh-adapter/questions.js'
 import { TuiDialogStore } from '../dsh-adapter/dialogs.js'
 import { TuiStatusStore, type TuiStatusViewUi } from '../dsh-adapter/status.js'
@@ -116,6 +116,7 @@ import { isValidSessionColor, SESSION_COLOR_NAMES } from '../terminal-utils/sess
 import { TipsPanel } from '../components/TipsPanel.js'
 import { SubagentDashboard } from '../components/SubagentDashboard.js'
 import { JobsPanel } from '../components/JobsPanel.js'
+import { TeamPanel, TEAM_PAGES, type TeamPage } from '../components/TeamPanel.js'
 import { SubagentDetailScene } from '../components/SubagentDetailScene.js'
 import { FileActionsPanel, FILE_ACTION_COUNT } from '../components/FileActionsPanel.js'
 import { openExternal, openFile, revealInFileManager } from '../utils/openExternal.js'
@@ -133,6 +134,7 @@ import { extendTrajectory, projectWave, type TrajBuild } from '../dsh-adapter/tr
 import { miniWakeWidth } from '../components/trajectory/MiniWake.js'
 import { readTrajectorySeen, writeTrajectorySeen } from '../trajectoryPrefs.js'
 import type { RawTrajEvent as SessionEvent } from '../adapter/ports/channel-view.js'
+import { teammateCount } from '../dsh-adapter/team-store.js'
 import { LoadingState } from '../components/design-system/LoadingState.js'
 import { Pane } from '../components/design-system/Pane.js'
 import { loadHistory, type HistoryEntry } from '../history.js'
@@ -952,6 +954,10 @@ export function Chat({
    *  (open the panel AT that job), cleared on close so the keyboard/command
    *  path reopens at the top. */
   const [jobsPanelFocusId, setJobsPanelFocusId] = React.useState<string | null>(null)
+  /** Agent-Team panel (the roster key, once this session has teammates). */
+  const [teamPanelOpen, setTeamPanelOpen] = React.useState(false)
+  const [teamPage, setTeamPage] = React.useState<TeamPage>('members')
+  const [teamFocus, setTeamFocus] = React.useState(0)
   // MessageList forwards these open handlers to every memoized row. Their
   // identities must survive token/metrics updates, including for tool rows.
   const openJobsPanel = React.useCallback((focusId?: string) => {
@@ -1455,6 +1461,31 @@ export function Chat({
       injectControllerRef.current = null
     }
   })
+
+  /**
+   * Open a member's own session (`Viewing teammate` / `Viewing leader`).
+   *
+   * The roster row's session id IS the child session id, so the channel's
+   * agent-view attachment path can adopt it in place — the same path
+   * `/agentview` Enter uses, which is why a live teammate swaps the terminal
+   * straight onto its conversation.
+   */
+  const openTeammate = (member: TeamMemberRow): void => {
+    if (member.role === 'lead' || member.sessionId === channel.sessionId) {
+      channel.notify(t('team-open-lead'))
+      setTeamPanelOpen(false)
+      return
+    }
+    void channel.attachToAgent(member.sessionId).then(result => {
+      if (result.ok) {
+        channel.notify(t('team-open-teammate', { name: member.name }))
+        setTeamPanelOpen(false)
+        return
+      }
+      channel.notify(t('team-open-unavailable'), { color: 'warning' })
+    })
+  }
+
   const requestExit = () => {
     if (exitPendingRef.current) {
       onExit()
@@ -3973,11 +4004,26 @@ export function Chat({
       return
     }
     if (actionMatches('dashboard', input, key)) {
-      // The subagent dashboard key (default Ctrl+A) opens the dashboard.
-      // Consume the key: without the stop the prompt editor's readline
-      // binding ALSO fires (Ctrl+A moves the caret to line start), so one
-      // press both opens the overlay and jumps the cursor.
-      setSubagentDashboardOpen(true)
+      // One key, one question: does THIS session have a team running? Both
+      // views are read-only, so either answer is safe; the point is that it is
+      // answered from the durable team record and not from a preset, a service
+      // probe or a deployment-wide flag. `teammateCount` is that record in
+      // projection form — the kernel synthesizes the Lead row and only a real
+      // `spawn_teammate` appends a `team/member` event, so a Lead with nobody
+      // spawned under it has no teammates and answers "not a team yet". That is
+      // also why the subagent dashboard stays reachable in a team deployment:
+      // every session there carries the kernel and its tools.
+      //
+      // Consume the key either way: without the stop the prompt editor's
+      // readline binding ALSO fires (Ctrl+A moves the caret to line start), so
+      // one press would open the overlay and jump the cursor.
+      if (teammateCount(channel.team) > 0) {
+        setTeamPage('members')
+        setTeamPanelOpen(true)
+        channel.markTeamRead()
+      } else {
+        setSubagentDashboardOpen(true)
+      }
       event.stopImmediatePropagation()
       return
     }
@@ -4009,7 +4055,7 @@ export function Chat({
         setSelectionActive(false)
         setSelectedId(null)
       }
-    } else if (key.escape && channel.working && !helpOpen && !promptControllerRef.current?.vimActive()) {
+    } else if (key.escape && channel.working && !helpOpen && !teamPanelOpen && !promptControllerRef.current?.vimActive()) {
       // Esc interrupts a running turn (the prompt input
       // only sees esc when idle, where it has the double-tap-clear meaning).
       // With messages queued for delivery, interrupt-and-deliver them right
@@ -4017,6 +4063,9 @@ export function Chat({
       // vim mode (either submode) yields: there Esc is a MODE key (INSERT→
       // NORMAL, NORMAL = no-op/cancel pending d) and the prompt owns it;
       // interrupting still works via Ctrl+C / Ctrl+Enter.
+      // The team panel owns Esc while it is open: this listener registered
+      // first (Chat mounts before the panel), so without the gate one press
+      // would both close the panel and interrupt the running turn.
       if (channel.pending.length > 0) {
         const count = channel.interruptAndDeliver(channel.pending.map(item => ({
           text: item.text,
@@ -4419,6 +4468,35 @@ export function Chat({
           if (channel.jobControl?.kill(id) !== true) {
             channel.notify(t('jobs-kill-failed', { id }), { color: 'error' })
           }
+        }}
+      />
+    )
+    return fullscreen ? panel : <AlternateScreen>{panel}</AlternateScreen>
+  }
+
+  // Agent-Team panel and its forms. Like the jobs/subagent panels these
+  // replace the conversation entirely, so the roster gets the full terminal
+  // (Claude Code's agent view is a whole screen for exactly this reason).
+  if (teamPanelOpen) {
+    const panel = (
+      <TeamPanel
+        team={channel.team}
+        messages={channel.teamMessages ?? []}
+        page={teamPage}
+        focusIndex={teamFocus}
+        onPage={(page) => {
+          setTeamPage(page)
+          setTeamFocus(0)
+          if (page === 'inbox') channel.markTeamRead()
+        }}
+        onFocus={setTeamFocus}
+        onClose={() => setTeamPanelOpen(false)}
+        onOpenMember={openTeammate}
+        onRefresh={() => {
+          // Both stores re-read from the host registry, so a panel opened on a
+          // session whose value never changed since boot still fills in.
+          channel.refreshTeamProjection()
+          channel.notify(t('team-refreshed'), { timeoutMs: 2000 })
         }}
       />
     )

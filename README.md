@@ -37,6 +37,7 @@
 - **DSH integrations** — presets, skills, MCP, goals, todos, subagents, questionnaires.
 - **Account sign-in** — the standard profile offers pi-ai OAuth for ChatGPT/Codex, Claude, and Grok (plus OpenAI direct and Meta Muse when available), and Host-owned DeepSeek browser sign-in as `deepseek-account` on DSH 0.2.0-rc.1+. Use `/provider` or `/auth` without another plugin.
   A profile-only update from a global TUI patch that already mounts `dsh-tui-auth` can still start the official loopback callback listener on demand; fixed-port SSH forwarding still requires the global package to be aligned.
+- **Agent Teams** — `Ctrl+A` opens the Agent-Team panel once this session has teammates: roster, shared task board, teammate inbox, and `Enter` switches to a member's own session. A session without teammates keeps the subagent dashboard it always had — the routing reads the durable team record (the `team/member` events a real `spawn_teammate` writes), not a preset or a capability probe. The team itself is composed by the deployment, not by this plugin: enable Agent Teams in your profile (the official `@deepseek-ai/dsh-experimental-agent-team-profile` layer inserts the kernel and its tools at the composition root, and brings both packages with it). There is no `/team` command: the panel is the only TUI-side piece, and it reads the official `agentTeam` Session projection — the model creates and drives the team through the official Team tools. Where that layer is absent the panel is simply empty and says so; every other feature is unaffected. The status line carries a `⬢ n` chip.
 - **Extensions** — browser interaction, computer use and more.
 - **Built for long sessions** — event-driven projection, virtualization, bounded caches.
 
@@ -168,7 +169,7 @@ Full guide: [Session migration](docs/migrate.en.md).
 
 ## Keybindings & Mouse
 
-`Enter` send · `Tab` complete · `Ctrl+Enter` interrupt and send · `Alt+Up` recall the last message · `Esc` dismiss, double-`Esc` rewinds · `Ctrl+O` details · `Ctrl+R` history · `Ctrl+V` paste · `Ctrl+Shift+E` fullscreen draft editor · `?` shortcuts · `←` background the session.
+`Enter` send · `Tab` complete · `Ctrl+Enter` interrupt and send · `Alt+Up` recall the last message · `Esc` dismiss, double-`Esc` rewinds · `Ctrl+O` details · `Ctrl+R` history · `Ctrl+V` paste · `Ctrl+Shift+E` fullscreen draft editor · `Ctrl+A` roster panel (team / subagents) · `?` shortcuts · `←` background the session.
 
 While the model is working: `Enter` steers, `Tab` queues a follow-up, `Ctrl+Enter` interrupts and sends.
 
@@ -197,6 +198,7 @@ Full reference: [Interaction and commands](docs/interaction.en.md).
 ## Built-in Commands
 
 `/resume` · `/home` · `/agentview` · `/bg` · `⌸` open the same session manager: workspace rail, live state, filter, ★ pins. Also `/model` `/new` `/compact` `/export` `/btw` `/tree` `/fork` `/rewind` `/settings` `/status` `/cost` `/jobs` `/skills` `/mcp` `/provider` `/auth` `/login` `/update`.
+`/resume` · `/home` · `/agentview` · `/bg` · `⌸` open the same session manager: workspace rail, live state, filter, ★ pins. Also `/model` `/new` `/compact` `/export` `/btw` `/tree` `/fork` `/rewind` `/settings` `/status` `/cost` `/jobs` `/skills` `/mcp` `/login` `/update`.
 
 The session manager paints the last successful list immediately while it checks the persistence store for changes. Titles that require a deeper log scan appear first with a fallback name and update in place when recovery finishes.
 

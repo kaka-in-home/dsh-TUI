@@ -145,6 +145,23 @@ export class SubagentActivityStore {
 
   getSubagentIdBySession(session: unknown): string | undefined { return this.sessionToAgent.get(session) }
 
+  /**
+   * Find the live subagent state whose child session is one id.
+   *
+   * Unlike {@link getSubagentIdBySession} this takes a plain session id (the
+   * Agent-Team projection publishes ids, never session objects) and reads the
+   * live states directly, so a per-frame cross-reference stays allocation
+   * free — the team reader calls it for every roster row on every publish.
+   * @param sessionId - Child session id.
+   * @returns the live state, or undefined when this process never hosted it.
+   */
+  findBySessionId(sessionId: string): SubagentState | undefined {
+    for (const state of this.states.values()) {
+      if (state.sessionId === sessionId) return state
+    }
+    return undefined
+  }
+
   has(agentId: string): boolean { return this.states.has(agentId) }
 
   appendOutput(agentId: string, text: string, kind: SubagentOutputKind = 'text'): void {

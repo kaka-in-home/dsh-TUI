@@ -4,6 +4,8 @@ import { normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, norm
 import { normalizeActivityPreset } from '../../components/activityFrames.js'
 import { normalizeSplashFont, type SplashFontSetting } from '../../components/splashFonts.js'
 import type { ChannelState } from './types.js'
+import type { TeamInboxStore } from '../team-inbox.js'
+import type { TeamStore } from '../team-store.js'
 
 /** Launch configuration belongs to channel construction, not the composition root. */
 export interface ChannelLaunchOptions {
@@ -16,6 +18,17 @@ export interface ChannelLaunchOptions {
    *  projection value only arrives on change, so a resumed session needs this
    *  read to render its line before the next event lands. */
   seedActivity?: (session: unknown) => void
+  /** Read the agent-team projection's current value when a session binds, and
+   *  return the value for the session on screen. The team projection lives in
+   *  the Lead (root) session's log, so a teammate's own session resolves its
+   *  team by walking to the parent (see `leadSessionIdOf`). */
+  seedTeam?: (session: unknown) => void
+  /** Agent-Team read face (official `agentTeam` Session projection). Absent
+   *  when the composition has no team plugin: the UI then reports "no team"
+   *  instead of inventing one. */
+  teamStore?: TeamStore
+  /** Agent-Team inbox: teammate messages folded from this session's own log. */
+  teamInbox?: TeamInboxStore
   activityFrames?: string
   /** Settings namespace this boot registered its section under: the Config
    *  owner's Loader id (`resolveSettingsNamespace`), which is NOT always the
@@ -76,8 +89,8 @@ export function createInitialChannelView(
   'foldTerminalCommand' | 'promptSessionLabel' | 'expandEditor' | 'smoothStreaming' |
   'statusBar' | 'whale' | 'whaleIdle' | 'splashFont' | 'minimalUi' | 'activityEnabled' | 'contextBarEnabled' |
   'statusBar' | 'whale' | 'whaleIdle' | 'whaleGirl' | 'minimalUi' | 'activityEnabled' | 'contextBarEnabled' |
-  'agentPreset' | 'goal' | 'todos' | 'loadedContext' | 'pending' | 'commandList' |
-  'lastUsage' | 'tps' | 'tpsSamples' | 'contextSegments' | 'mainCost' | 'subagentCost' | 'subagents' | 'backgroundJobs' | 'selection'
+  'agentPreset' | 'goal' | 'todos' | 'loadedContext' | 'pending' | 'commandList' | 'refreshTeamProjection' | 'teamUnread' | 'markTeamRead' |
+  'lastUsage' | 'tps' | 'tpsSamples' | 'contextSegments' | 'mainCost' | 'subagentCost' | 'subagents' | 'backgroundJobs' | 'selection' | 'team' | 'teamMessages'
 > {
   return {
     effortLevels: undefined, version: 0, rows: [], selection: undefined, status: 'starting', sessionTitle: '', sessionColor: '',
@@ -99,11 +112,16 @@ export function createInitialChannelView(
     smoothStreaming: options.smoothStreaming !== false, statusBar: normalizeStatusBar(options.statusBar),
     whale: options.whale !== false, whaleIdle: options.whaleIdle !== false, whaleGirl: options.whaleGirl === true, splashFont: normalizeSplashFont(options.splashFont), minimalUi: options.minimalUi === true, activityEnabled: options.activity !== false,
     contextBarEnabled: options.contextBar !== false, agentPreset: options.agentPreset, goal: undefined,
+    // Replaced by createChannel with the real store reads; the initializer
+    // only has to satisfy the shape.
+    refreshTeamProjection: () => undefined,
+    teamUnread: 0,
+    markTeamRead: () => undefined,
     todos: [], loadedContext: undefined, pending: [], commandList: [], lastUsage: undefined,
     tps: undefined, tpsSamples: [], contextSegments: { system: 0, prompt: 0, assistant: 0, thinking: 0, tools: 0 },
     // 费用估算输入：主会话按模型分桶 + 子代理快照。与 tokens 并行累计，
     // tokens 的既有语义/显示不变（DESIGN D2）。
     mainCost: {}, subagentCost: [],
-    subagents: [], backgroundJobs: [],
+    subagents: [], backgroundJobs: [], team: undefined, teamMessages: [],
   }
 }

@@ -109,6 +109,9 @@ const GATES = [
   'verify:math-inline-image',
   'verify:semantic-copy',
   'verify:btw',
+  'verify:team-agents',
+  'verify:team-contract',
+  'verify:team-subagent-boundary',
   'verify:session-mounts',
   'verify:handoff-stdin',
 ]

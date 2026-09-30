@@ -24,6 +24,11 @@ export function createBindingEvents(ctx: Context, deps: {
    *  The line's semantics live in the working-activity plugin: this app folds
    *  nothing itself and forwards no events. */
   seedActivity?(session: unknown): void
+  /** Read the agent-team projection's current value for a freshly bound
+   *  session. Same reason as `seedActivity`: the feed only pushes on change,
+   *  so a resumed Lead would render an empty team panel until the next team
+   *  event without this read. */
+  seedTeam?(session: unknown): void
   inputConvergence: InputConvergence
   selection: ModelSelectionRef
   modelActions: { applyPreferredEffort(): Promise<void>; selection: ModelSelectionRef }
@@ -87,6 +92,7 @@ export function createBindingEvents(ctx: Context, deps: {
       deps.inputConvergence.cancelInFlight = false
       deps.inputConvergence.interruptSeq += 1
       deps.seedActivity?.(deps.binding.agent.session)
+      deps.seedTeam?.(deps.binding.agent.session)
       deps.modelActions.selection.current = undefined
       deps.modelActions.selection.assembled = undefined
       if (deps.binding.agent.options?.model === undefined && deps.state.provider !== '' && deps.state.model !== '') {

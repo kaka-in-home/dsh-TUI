@@ -750,3 +750,74 @@ export interface LlmDiscoveredModel { id: string; name?: string; contextWindow?:
 export type ChannelImageMediaType = 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
 export interface ChannelSceneMetadata { readonly id: string; readonly title?: string }
 export interface RawTrajEvent { readonly type: string; readonly seq: number; readonly time: number; readonly data: unknown }
+
+// ── Agent Teams (official `agentTeam` Session projection) ───────────────────
+
+/** Durable teammate lifecycle, as the official Team service persists it. */
+export type TeamMemberPhase = 'provisioning' | 'active' | 'failed'
+
+/**
+ * Turn activity the TUI observes locally: `running` means a turn is executing
+ * now (a live subagent epoch), `idle` means none is, `unknown` means this
+ * process cannot see the member's runtime (a cold roster row).
+ */
+export type TeamMemberTurn = 'running' | 'idle' | 'unknown'
+
+/** One roster row: durable projection fields plus TUI-side activity. */
+export interface TeamMemberRow {
+  /** Member Session id — also the key linking a teammate to its subagent card. */
+  readonly sessionId: string
+  readonly name: string
+  readonly role: 'lead' | 'teammate'
+  readonly phase: TeamMemberPhase
+  readonly turn: TeamMemberTurn
+  /** True for the member whose session the UI is currently showing. */
+  readonly current: boolean
+  readonly error?: string
+  /** Cross-reference into the subagent projection, when this process saw it. */
+  readonly agentId?: string
+  readonly model?: string
+  readonly description?: string
+}
+
+/** Durable task lifecycle (`deleted` tasks never reach a client view). */
+export type TeamTaskStatus = 'pending' | 'in_progress' | 'completed'
+
+/** One shared-task row, exactly as the official projection publishes it. */
+export interface TeamTaskRow {
+  readonly id: string
+  readonly revision: number
+  readonly subject: string
+  readonly description: string
+  readonly status: TeamTaskStatus
+  readonly blockedBy: readonly string[]
+  readonly writeScopes: readonly string[]
+  readonly ownerName?: string
+  /** True when every blocker is complete (claimable now). */
+  readonly ready: boolean
+  /** Advisory overlap warnings between in-progress tasks. */
+  readonly writeScopeWarnings: readonly string[]
+}
+
+/**
+ * One session's whole team value. `failure` is the projection's own terminal
+ * diagnostic: the roster and tasks then stay at the last valid state, and the
+ * UI must say so instead of pretending everything is fine.
+ */
+export interface TeamView {
+  readonly members: readonly TeamMemberRow[]
+  readonly tasks: readonly TeamTaskRow[]
+  readonly failure?: string
+}
+
+
+/** One received teammate message (folded from the session's own durable log). */
+export interface TeamMessageRow {
+  readonly id: string
+  readonly senderName: string
+  readonly text: string
+  readonly at: number
+}
+
+
+

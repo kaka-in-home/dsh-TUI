@@ -87,6 +87,10 @@ export function createCommandCompletions(deps: {
           ...(snapshot.current?.kind === 'preset' && snapshot.current.value === option.value ? { tag: 'current' } : {}),
         }))
       }
+      // The Agent-Team panel has NO slash command: the roster key (`dashboard`,
+      // default Ctrl+A) opens it for a session that has teammates, so there is
+      // no `/team` subtree to complete. Everything the model-facing side needs
+      // lives in the official Team tools, not in this plugin.
       if (path.length === 1 && path[0] === 'plan') return [
         { name: 'on', description: 'Enter plan mode: read-only, plan before acting', descriptionKey: 'plan-mode-on-desc' },
         { name: 'off', description: 'Exit plan mode, back to normal execution', descriptionKey: 'plan-mode-off-desc' },

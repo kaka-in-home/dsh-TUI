@@ -13,24 +13,29 @@ const temporary = await mkdtemp(join(tmpdir(), 'dsh-tui-presets-'))
 try {
   assert.equal(packagedPresetRoot(), packagedRoot)
   const dshHome = join(temporary, 'home')
-  assert.deepEqual(ensurePackagedPresets({ dshHome, sourceRoot: packagedRoot }), [
-    { id: 'liangshen', status: 'installed' },
-  ])
-  assert.deepEqual(ensurePackagedPresets({ dshHome, sourceRoot: packagedRoot }), [
-    { id: 'liangshen', status: 'current' },
-  ])
+  // Every shipped preset is materialized (readdir order is the install order).
+  const shipped = (await (await import('node:fs/promises')).readdir(packagedRoot, { withFileTypes: true }))
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort()
+  assert.deepEqual(ensurePackagedPresets({ dshHome, sourceRoot: packagedRoot }).map(row => row.id).sort(), shipped)
+  assert.deepEqual(ensurePackagedPresets({ dshHome, sourceRoot: packagedRoot }).map(row => row.status), shipped.map(() => 'current'))
 
-  const installed = await readFile(join(dshHome, '.agent-presets', 'liangshen', 'agent.cordis.yml'), 'utf8')
-  assert.deepEqual(parse(installed, { logLevel: 'silent' }),
-    parse(await readFile(join(packagedRoot, 'liangshen', 'agent.cordis.yml'), 'utf8'), { logLevel: 'silent' }))
+  for (const id of shipped) {
+    const installed = await readFile(join(dshHome, '.agent-presets', id, 'agent.cordis.yml'), 'utf8')
+    assert.deepEqual(parse(installed, { logLevel: 'silent' }),
+      parse(await readFile(join(packagedRoot, id, 'agent.cordis.yml'), 'utf8'), { logLevel: 'silent' }),
+      `${id} must install byte-identically`)
+  }
 
   const conflictingHome = join(temporary, 'conflicting-home')
   const conflictingPreset = join(conflictingHome, '.agent-presets', 'liangshen')
   await mkdir(conflictingPreset, { recursive: true })
   await writeFile(join(conflictingPreset, 'keep.txt'), 'user-owned\n')
-  assert.deepEqual(ensurePackagedPresets({ dshHome: conflictingHome, sourceRoot: packagedRoot }), [
-    { id: 'liangshen', status: 'conflict' },
-  ])
+  assert.deepEqual(
+    ensurePackagedPresets({ dshHome: conflictingHome, sourceRoot: packagedRoot })
+      .filter(row => row.id === 'liangshen'),
+    [{ id: 'liangshen', status: 'conflict' }])
   assert.equal(await readFile(join(conflictingPreset, 'keep.txt'), 'utf8'), 'user-owned\n')
 
   const nextRoot = join(temporary, 'next')
@@ -39,12 +44,13 @@ try {
   const marker = JSON.parse(await readFile(markerPath, 'utf8'))
   marker.revision = `${marker.revision}-test-update`
   await writeFile(markerPath, `${JSON.stringify(marker, null, 2)}\n`)
-  assert.deepEqual(ensurePackagedPresets({ dshHome, sourceRoot: nextRoot }), [
-    { id: 'liangshen', status: 'updated' },
-  ])
+  assert.deepEqual(
+    ensurePackagedPresets({ dshHome, sourceRoot: nextRoot })
+      .filter(row => row.id === 'liangshen'),
+    [{ id: 'liangshen', status: 'updated' }])
   assert.equal(JSON.parse(await readFile(join(dshHome, '.agent-presets', 'liangshen', '.dsh-tui-managed.json'), 'utf8')).revision, marker.revision)
 } finally {
   await rm(temporary, { recursive: true, force: true })
 }
 
-console.log('packaged presets OK (install, discover, preserve conflict, update)')
+console.log('packaged presets OK (install, discover, preserve conflict, update; every shipped preset)')

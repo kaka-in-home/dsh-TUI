@@ -39,6 +39,21 @@ function readPresetPatch(path: string): PresetDefinition {
 }
 
 /**
+ * The preset ids this package registers into the official declarative roster.
+ *
+ * `liangshen` is the shipped experimental preset. Each entry is registered only
+ * when no enabled loader row already declares the same id, so a profile or
+ * another bundle that owns the seat wins.
+ *
+ * Agent Teams is deliberately NOT here. The official composition for it is a
+ * PROFILE LAYER (`@deepseek-ai/dsh-experimental-agent-team-profile`), which
+ * inserts the kernel and its tools at the composition root; a second, TUI-owned
+ * preset would have to re-derive that decision and could drift from the official
+ * one. This plugin only reads the team state the official layer produces.
+ */
+const BUNDLED_PRESETS = ['liangshen'] as const
+
+/**
  * 0.1.7 removed directory discovery. Consume the official bundle definitions
  * through its registry, without copying or reimplementing their tool sets.
  * Web/profile declarations own their seats even while still activating.
@@ -70,16 +85,17 @@ export async function registerBundledPresets(ctx: Context): Promise<boolean> {
     const dispose = await declarativePresets(owner)!.register(readPresetPatch(path))
     ctx.effect(() => dispose)
   }
-  if (!declared.has('liangshen')) {
-    const root = join(packagedPresetRoot(), 'liangshen')
+  for (const id of BUNDLED_PRESETS) {
+    if (declared.has(id)) continue
+    const root = join(packagedPresetRoot(), id)
     const metadata: Pick<PresetDefinition, 'name' | 'description' | 'order'> = parse(readFileSync(join(root, 'preset.yml'), 'utf8'))
     const dispose = await declarativePresets(ctx)!.register({
-      id: 'liangshen',
+      id,
       name: metadata.name,
       description: metadata.description,
       order: metadata.order,
       plugins: [{
-        id: 'liangshen-plugins',
+        id: `${id}-plugins`,
         name: '@deepseek-ai/cordis-plugin-include',
         config: { path: pathToFileURL(join(root, 'agent.cordis.yml')).href },
       }],

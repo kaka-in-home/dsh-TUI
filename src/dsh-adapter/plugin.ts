@@ -57,6 +57,8 @@ import { reserveMount } from '../sessionMounts.js'
 import { getHostDialogStore, type TuiDialogRuntime } from './dialogs.js'
 import { getHostStatusStore, type TuiStatusRuntime } from './status.js'
 import { createActivityStore } from './activity-store.js'
+import { createTeamStore } from './team-store.js'
+import { TeamInboxStore } from './team-inbox.js'
 import { getHostToastStore, type TuiToastRuntime } from './toast.js'
 import { getHostShortcuts, type TuiShortcutRuntime } from './shortcuts.js'
 import { getHostThemes, type TuiThemeRuntime } from './themes.js'
@@ -538,6 +540,16 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // (the runtime `/activity` command only changes the preset), so a hidden
   // line attaches nothing at all — no feed, no 500ms tick.
   const activityStore = createActivityStore(ctx, config.activity !== false)
+  // Agent-Team read face. The Team runtime is composed by the DEPLOYMENT (the
+  // official `dsh-experimental-agent-team-profile` layer inserts its rows at the
+  // composition root), so this plugin never resolves the `agentTeams` service:
+  // it subscribes to the official `agentTeam` Session projection the kernel
+  // publishes, exactly like the Web UI does. Where that layer is absent the
+  // projection is absent and the store simply stays empty. Created before the
+  // channel for the same temporal reason as the activity store — the channel
+  // binds its agent synchronously while it is still being built.
+  const teamStore = createTeamStore(ctx)
+  const teamInbox = new TeamInboxStore()
   const rawChannel = createChannel(ctx, agent, {
     // The namespace this boot actually registered the settings section under
     // (the Config owner's Loader id; custom ids are supported). Chat and the
@@ -548,6 +560,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // soon as this session binds so a resumed or reattached session renders its
     // line immediately instead of waiting for the next event.
     seedActivity: session => activityStore.seed(session),
+    // Same reason for the team value: the projection only pushes on change,
+    // and it lives in the Lead session's log, so a teammate's own session
+    // resolves its team by walking to the parent.
+    seedTeam: session => teamStore.seed(session),
+    teamStore,
+    teamInbox,
     // A RESUMED session keeps its persisted header cwd (issue #96 review):
     // pre-upgrade sessions recorded the launch directory, and re-resolving
     // from the current launch directory would split @ expansion / file

@@ -41,11 +41,21 @@ const standard = fresh.registrations[0]
 assert.match(standard.baseUrl, /standard\.patch\.yml$/u)
 assert.equal(typeof standard.definition.plugins.find(row => row.id === 'tool-bash').disabled.__jsExpr, 'string',
   'platform expressions must remain unevaluated for the upstream Loader')
-const liangshen = fresh.registrations.at(-1).definition
-assert.equal(new URL(liangshen.plugins[0].config.path).protocol, 'file:')
-assert.equal(fileURLToPath(liangshen.plugins[0].config.path), fileURLToPath(new URL('../presets/liangshen/agent.cordis.yml', import.meta.url)))
-const metadata = parse(readFileSync(new URL('../presets/liangshen/preset.yml', import.meta.url), 'utf8'))
-assert.deepEqual({ name: liangshen.name, description: liangshen.description, order: liangshen.order }, metadata)
+for (const id of ['liangshen']) {
+  const definition = fresh.registrations.find(row => row.definition.id === id).definition
+  assert.equal(new URL(definition.plugins[0].config.path).protocol, 'file:')
+  assert.equal(fileURLToPath(definition.plugins[0].config.path), fileURLToPath(new URL(`../presets/${id}/agent.cordis.yml`, import.meta.url)))
+  const metadata = parse(readFileSync(new URL(`../presets/${id}/preset.yml`, import.meta.url), 'utf8'))
+  assert.deepEqual({ name: definition.name, description: definition.description, order: definition.order }, metadata,
+    `${id} metadata must come from its preset.yml`)
+}
+// Agent Teams must NOT be a TUI-owned preset. The official composition for it is
+// the `dsh-experimental-agent-team-profile` bundle, a PROFILE layer that inserts
+// the kernel at the composition root; a second TUI preset would re-derive that
+// decision, own rows this plugin does not implement, and drift from the official
+// one. This plugin reads the team the official layer produces and nothing else.
+assert.ok(!fresh.registrations.some(row => row.definition.id === 'agent-team'),
+  'the TUI must not register an agent-team preset')
 for (const dispose of fresh.effects) await dispose()
 assert.deepEqual(fresh.disposed, ['standard', 'ptc', 'minimal', 'cordis', 'liangshen'])
 
@@ -125,4 +135,4 @@ try {
   await runtime.fiber.dispose()
   rmSync(relocatedRoot, { recursive: true, force: true })
 }
-console.log('bundled presets OK (official definitions, expressions, ownership, legacy, relocated Include, metadata, disposal)')
+console.log('bundled presets OK (official definitions, no TUI-owned Team preset, expressions, ownership, legacy, relocated Include, metadata, disposal)')
