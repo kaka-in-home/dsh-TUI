@@ -28,6 +28,9 @@ const activationGenerations = new WeakMap<object, number>()
 const activationTokens = new WeakMap<object, ActivationToken>()
 const activationStorage = new AsyncLocalStorage<ActivationToken>()
 const hostCapabilityStorage = new AsyncLocalStorage<boolean>()
+const projectionEffectRoot = new AsyncLocalStorage<Context>()
+const projectionRoots = new WeakSet<object>()
+const projectionRegistries = new WeakSet<object>()
 const guardedRootFibers = new WeakSet<object>()
 const guardedRootRegistries = new WeakSet<object>()
 const guardedRootEvents = new WeakSet<object>()
@@ -299,6 +302,7 @@ export function withHostRootCapability<T>(callback: () => T): T {
 }
 
 function rejectRootCapability(root: Context, capability: string): void {
+  if (capability === 'root.effect' && projectionEffectRoot.getStore() === root) return
   if (currentActivationIsPlugin(root)) {
     throw new Error(`dsh-tui: ${capability} is unavailable from a plugin activation`)
   }
@@ -317,18 +321,9 @@ function guardRootCapabilities(root: Context): void {
   const rootFiber = rootFibers.get(root as object)
   if (rootFiber !== undefined && !guardedRootFibers.has(rootFiber)) {
     guardedRootFibers.add(rootFiber)
-    // `root.effect` stays OPEN. It only appends a cleanup callback to the root
-    // fiber's own effect list, and every official plugin legitimately needs it:
-    // the Agent Teams kernel registers its session-projection unit exactly that
-    // way (`ctx.effect(() => ctx.root.sessionProjections.register(...))` in
-    // `@deepseek-ai/dsh-experimental-agent-team`), because a projection unit is
-    // owned by the HOST-plane registry while the kernel that publishes the
-    // value lives in its own realm. Guarding it made the official Agent Teams
-    // layer permanently unusable: the registry reported the kernel row as
-    // `never started` and the mount failed (observed 2026-09-30, cordis 4.0.4 +
-    // dsh 0.2.0-rc.2). The three lifecycle capabilities below stay guarded:
-    // restart/dispose/update act on the composition ROOT itself and no preset
-    // row has a reason to call them.
+    // Domain plugins may register host projections through the registry below;
+    // arbitrary root-lifetime effects still violate activation ownership.
+    guardFiberMethod(rootFiber, 'effect', root, 'root.effect')
     guardFiberMethod(rootFiber, 'restart', root, 'root.fiber.restart')
     guardFiberMethod(rootFiber, 'dispose', root, 'root.fiber.dispose')
     guardFiberMethod(rootFiber, 'update', root, 'root.fiber.update')
@@ -370,6 +365,63 @@ function guardRootCapabilities(root: Context): void {
   } catch {
     // Fall through when a minimal embedder omits reflection internals.
   }
+  mediateProjectionEffects(root)
+}
+
+/** Allow only the registry's own effect setup, not other root capabilities. */
+function mediateProjectionEffects(root: Context): void {
+  if (projectionRoots.has(root) || typeof root.inject !== 'function') return
+  projectionRoots.add(root)
+  withHostRootCapability(() => root.inject(['sessionProjections'] as never, scope => {
+    const service = scope.get('sessionProjections')
+    if (service === undefined) return
+    const registry = concreteService(service as object)
+    if (projectionRegistries.has(registry)) return
+    projectionRegistries.add(registry)
+    for (const method of ['register', 'onChanged'] as const) {
+      const original = Reflect.get(registry, method)
+      if (typeof original !== 'function') continue
+      Object.defineProperty(registry, method, {
+        // Cordis returns context-bound method proxies; a frozen own value would
+        // violate Proxy.get invariants when the caller receives that proxy.
+        configurable: true,
+        writable: true,
+        value: function (this: unknown, ...args: unknown[]) {
+          const caller = activationStorage.getStore()
+          if (caller !== undefined) {
+            if (caller.root !== root) throw new Error('dsh-tui: projection registration belongs to another composition')
+            assertLiveContext(caller.context, `sessionProjections.${method}`)
+          }
+          // Read caller-owned getters before entering the narrow permission.
+          // The registry captures functions but does not execute them at setup.
+          if (method === 'register') {
+            if (args[0] === null || typeof args[0] !== 'object') {
+              throw new TypeError('dsh-tui: projection definition must be an object')
+            }
+            const input = args[0] as Record<string, unknown>
+            const definition = { ...input }
+            for (const key of ['key', 'stateVersion', 'stateSchema', 'init', 'apply', 'wire']) {
+              if (!Object.hasOwn(definition, key)) definition[key] = input[key]
+            }
+            if (typeof definition.key !== 'string' || typeof definition.stateVersion !== 'number'
+              || !Number.isSafeInteger(definition.stateVersion) || definition.stateVersion < 0) {
+              throw new TypeError('dsh-tui: projection key and stateVersion must be primitive string/unsigned integer values')
+            }
+            if (definition.wire !== null && typeof definition.wire === 'object') {
+              const wire = definition.wire as Record<string, unknown>
+              const snapshot = { ...wire }
+              for (const key of ['viewSchema', 'view']) {
+                if (!Object.hasOwn(snapshot, key)) snapshot[key] = wire[key]
+              }
+              definition.wire = snapshot
+            }
+            args = [definition]
+          }
+          return projectionEffectRoot.run(root, () => Reflect.apply(original, this, args))
+        },
+      })
+    }
+  }))
 }
 
 function guardFiberMethod(target: object, method: string, root: Context, capability: string): void {

@@ -110,6 +110,8 @@ const GATES = [
   'verify:semantic-copy',
   'verify:btw',
   'verify:team-agents',
+  'verify:team-binding',
+  'verify:team-panel',
   'verify:team-contract',
   'verify:team-subagent-boundary',
   'verify:session-mounts',

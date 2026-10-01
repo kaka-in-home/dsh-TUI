@@ -1471,17 +1471,22 @@ export function Chat({
    * straight onto its conversation.
    */
   const openTeammate = (member: TeamMemberRow): void => {
-    if (member.role === 'lead' || member.sessionId === channel.sessionId) {
-      channel.notify(t('team-open-lead'))
+    const viewingNotice = member.role === 'lead'
+      ? t('team-open-lead')
+      : t('team-open-teammate', { name: member.name })
+    if (member.sessionId === channel.sessionId) {
+      channel.notify(viewingNotice)
       setTeamPanelOpen(false)
       return
     }
     void channel.attachToAgent(member.sessionId).then(result => {
       if (result.ok) {
-        channel.notify(t('team-open-teammate', { name: member.name }))
+        channel.notify(viewingNotice)
         setTeamPanelOpen(false)
         return
       }
+      channel.notify(t('team-open-unavailable'), { color: 'warning' })
+    }).catch(() => {
       channel.notify(t('team-open-unavailable'), { color: 'warning' })
     })
   }
@@ -3279,7 +3284,7 @@ export function Chat({
     && approvalSnapshot === null && dialogSnapshot === null && questionSnapshot === null
     && overlay.kind === 'none' && btw === null && recap === null
     && !supervisorOpen && !treeOpen && !settingsOpen && !jobsPanelOpen
-    && !sceneOpen && !subagentDashboardOpen && subagentDetailId === null
+    && !sceneOpen && !subagentDashboardOpen && !teamPanelOpen && subagentDetailId === null
   const markCouponShown = React.useCallback((orderId: Parameters<WhaleCouponStore['shown']>[0]) => {
     bonusNotices?.shown(orderId)
   }, [bonusNotices])
@@ -3313,6 +3318,8 @@ export function Chat({
     // Same for the settings screen: plain letters (s save / d discard) and
     // the field draft editor belong to it alone.
     if (settingsOpen) return
+    // Replacement screens own every key before Chat's global shortcuts run.
+    if (teamPanelOpen) return
     // Subagent dashboard or detail scene: it owns the keyboard while open.
     if (subagentDashboardOpen || subagentDetailId !== null) return
     // The `/jobs` panel replaces the conversation too, so it owns Esc (close)
@@ -4019,6 +4026,7 @@ export function Chat({
       // one press would open the overlay and jump the cursor.
       if (teammateCount(channel.team) > 0) {
         setTeamPage('members')
+        setTeamFocus(0)
         setTeamPanelOpen(true)
         channel.markTeamRead()
       } else {
@@ -4295,7 +4303,7 @@ export function Chat({
   ) : null
   const interruptPanel = approvalPanelNode ?? questionPanelNode
   const screenOpen = channel.pluginScene !== undefined || supervisorOpen || settingsOpen
-    || subagentDetailId !== null || subagentDashboardOpen || sceneOpen
+    || subagentDetailId !== null || subagentDashboardOpen || teamPanelOpen || sceneOpen
   if (interruptPanel !== null && screenOpen) {
     const node = (
       <Box flexDirection="column" width="100%" paddingX={1}>

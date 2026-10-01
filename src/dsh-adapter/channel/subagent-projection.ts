@@ -21,12 +21,24 @@ interface ProjectionDependencies {
 export function createSubagentProjection(getState: () => ProjectionState, deps: ProjectionDependencies) {
   type Projection = ReturnType<typeof createSessionSubagentProjection>
   const parked = new Map<Agent, Projection>()
+  const listeners = new Set<() => void>()
+  const subscriptions = new Map<Projection, () => void>()
+  const notify = (): void => { for (const listener of [...listeners]) listener() }
+  const pruneSubscriptions = (): void => {
+    const retained = new Set([active, ...parked.values()])
+    for (const [projection, off] of subscriptions) {
+      if (retained.has(projection)) continue
+      off()
+      subscriptions.delete(projection)
+    }
+  }
   const hidden: ProjectionState = { rows: [], subagents: [], subagentCost: [], emit() {}, emitStream() {} }
   const make = (): Projection => {
     const projection = createSessionSubagentProjection(
       () => active === projection ? getState() : hidden,
       { ...deps, visible: () => active === projection },
     )
+    subscriptions.set(projection, projection.store.subscribe(notify))
     return projection
   }
   let active = make()
@@ -63,6 +75,7 @@ export function createSubagentProjection(getState: () => ProjectionState, deps: 
     active = previous
     activeParent = agent
     restored = true
+    pruneSubscriptions()
     for (const saved of active.store.snapshot()) {
       if (saved.status !== 'running' && saved.status !== 'starting') continue
       let child: ReturnType<typeof deps.lookupChild>
@@ -72,6 +85,19 @@ export function createSubagentProjection(getState: () => ProjectionState, deps: 
   }
   return {
     get store() { return active.store },
+    subscribe(listener: () => void): () => void {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
+    },
+    findBySessionId(sessionId: string): SubagentState | undefined {
+      const found = active.store.findBySessionId(sessionId)
+      if (found !== undefined) return found
+      for (const projection of parked.values()) {
+        const child = projection.store.findBySessionId(sessionId)
+        if (child !== undefined) return child
+      }
+      return undefined
+    },
     get pendingTaskDescriptions() { return active.pendingTaskDescriptions },
     control: { interrupt: (id: string) => active.control.interrupt(id) },
     onSessionEvent(session: unknown, event: { type?: string }): boolean {
@@ -106,9 +132,24 @@ export function createSubagentProjection(getState: () => ProjectionState, deps: 
     flush: () => active.flush(),
     dropRows: () => active.dropRows(),
     park, restore,
-    forget(agent: Agent) { parked.delete(agent) },
-    dispose() { parked.clear(); active.store.reset(); active.dropRows(); active.pendingTaskDescriptions.length = 0 },
-    reset() { active = make(); activeParent = deps.agent(); restored = false; getState().subagents = []; getState().subagentCost = [] },
+    forget(agent: Agent) { parked.delete(agent); pruneSubscriptions() },
+    dispose() {
+      for (const off of subscriptions.values()) off()
+      subscriptions.clear()
+      listeners.clear()
+      parked.clear()
+      active.store.reset()
+      active.dropRows()
+      active.pendingTaskDescriptions.length = 0
+    },
+    reset() {
+      active = make()
+      activeParent = deps.agent()
+      restored = false
+      pruneSubscriptions()
+      getState().subagents = []
+      getState().subagentCost = []
+    },
   }
 }
 

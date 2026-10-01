@@ -18,7 +18,6 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import React from 'react'
 import type {
   TeamMemberPhase,
   TeamMemberRow,
@@ -79,6 +78,19 @@ export interface TeamProjectionRegistryLike {
     seq: number,
   ) => void): () => void
   snapshot(session: unknown, keys?: readonly string[]): { readonly values: Record<string, unknown> }
+  restore?(checkpoint: Record<string, unknown>, events: readonly unknown[], baseSeq: number, header: unknown, inheritedEventCount: number): {
+    readonly snapshot: { readonly values: Record<string, unknown> }
+  }
+}
+
+/** Read-only persistence surface; opening a log never starts its agent. */
+export interface TeamPersistenceReader {
+  open(id: string, access: 'read', options: { signal: AbortSignal }): Promise<{
+    readonly header: unknown
+    readonly inheritedEventCount: number
+    read(from: number, to: undefined, options: { signal: AbortSignal }): Promise<{ readonly events: readonly unknown[] }>
+    close(): Promise<void>
+  }>
 }
 
 /**
@@ -152,13 +164,14 @@ export function projectTeamView(
     if (sessionId === undefined || name === undefined) continue
     const role = asString(member.role)
     const phase = asString(member.phase)
+    if (role === undefined || !ROLES.has(role) || phase === undefined || !PHASES.has(phase)) continue
     const runtime = resolve?.(sessionId)
     const error = asString(member.error)
     members.push({
       sessionId,
       name,
-      role: role !== undefined && ROLES.has(role) ? role as 'lead' | 'teammate' : 'teammate',
-      phase: phase !== undefined && PHASES.has(phase) ? phase as TeamMemberPhase : 'provisioning',
+      role: role as 'lead' | 'teammate',
+      phase: phase as TeamMemberPhase,
       turn: runtime?.turn ?? 'unknown',
       current: currentSessionId !== undefined && sessionId === currentSessionId,
       ...(error === undefined ? {} : { error }),
@@ -296,6 +309,7 @@ export class TeamStore {
   /** Remember the host registry (see {@link seed}). */
   attachRegistry(registry: TeamProjectionRegistryLike): void {
     this.registry = registry
+    for (const session of [...this.sessions.values()]) this.seed(session)
   }
 
   /**
@@ -371,6 +385,26 @@ export class TeamStore {
     this.update(id, view)
   }
 
+  /** Restore an offline Lead through the official projection registry. */
+  async seedStored(sessionId: string, persistence: TeamPersistenceReader, signal: AbortSignal, current: () => boolean): Promise<void> {
+    const registry = this.registry
+    if (registry?.restore === undefined) return
+    const before = this.raw.get(sessionId)
+    const handle = await persistence.open(sessionId, 'read', { signal })
+    try {
+      const { events } = await handle.read(0, undefined, { signal })
+      if (!current() || signal.aborted || this.raw.get(sessionId) !== before) return
+      const restored = registry.restore({}, events, 0, handle.header, handle.inheritedEventCount)
+      const raw = asTeamProjection(restored.snapshot.values[TEAM_PROJECTION_KEY])
+      if (raw === undefined) return
+      this.raw.set(sessionId, raw)
+      const view = projectTeamView(raw, this.resolve, this.currentId)
+      if (view !== undefined) this.update(sessionId, view)
+    } finally {
+      await handle.close()
+    }
+  }
+
   /**
    * Record one value that arrived on the change feed.
    *
@@ -391,7 +425,7 @@ export class TeamStore {
 
   /** Record one projection value for a session. */
   update(sessionId: string, view: TeamView): void {
-    if (this.values.get(sessionId) === view) return
+    if (sameTeamView(this.values.get(sessionId), view)) return
     this.values.set(sessionId, view)
     this.emit()
   }
@@ -402,6 +436,9 @@ export class TeamStore {
     return this.values.get(sessionId)
   }
 
+
+  /** Retain the small derived view, but release a disposed Session's full log. */
+  forgetSession(sessionId: string): void { this.sessions.delete(sessionId) }
 
   /** Forget one session (disposed, or a team that went away). */
   clear(sessionId: string): void {
@@ -472,6 +509,7 @@ export function attachTeamProjection(ctx: Context, store: TeamStore): void {
     if (registry === undefined) return
     store.attachRegistry(registry)
     const offFeed = registry.onChanged(createTeamFeed(store))
+    projectionCtx.on('session/disposed', session => { store.forgetSession(String(session.id)) })
     projectionCtx.effect(() => () => { offFeed() }, 'dsh-tui agent-team projection feed')
   }) as never)
 }
@@ -488,35 +526,28 @@ export function createTeamStore(ctx: Context): TeamStore {
   return store
 }
 
-/**
- * Resolve the session whose log owns the team for one visible session.
- *
- * The team projection lives in the Lead (root) session's log only, so a
- * teammate's own session carries none: reading it would find no team and the
- * panel would fall back to the subagent dashboard while the user is looking at
- * a member of a live team.
- *
- * The authoritative field is `session.header.parentSession` — that is the one
- * the official kernel itself walks (`tryMembership` and the runtime sweep in
- * `@deepseek-ai/dsh-experimental-agent-team`), and it is what a DSH Session
- * actually carries. `subagent.address.parentSessionId` is only the subagent
- * CATALOG's own record of the same edge, so it is kept as a fallback for
- * harnesses that hand in a catalog entry instead of a Session.
- *
- * Getting this wrong is silent: the fallback returns the viewed session's own
- * id, which for a teammate points at a log with no team in it.
- * @param session - Session being viewed, or its header.
- * @returns the Lead session id to read team state from.
- */
-export function leadSessionIdOf(session: unknown): string | undefined {
-  if (session === null || session === undefined) return undefined
+/** The header names a possible Team parent, not proof of membership. */
+export function parentTeamSessionIdOf(session: unknown): string | undefined {
+  if (session === null || typeof session !== 'object') return undefined
   const record = session as {
-    readonly id?: unknown
     readonly header?: { readonly parentSession?: unknown }
     readonly subagent?: { readonly address?: { readonly parentSessionId?: unknown } }
   }
   for (const candidate of [record.header?.parentSession, record.subagent?.address?.parentSessionId]) {
     if (typeof candidate === 'string' && candidate.length > 0) return candidate
   }
-  return typeof record.id === 'string' ? record.id : undefined
+  return undefined
+}
+
+/** Follow the parent only when its durable roster actually contains this member. */
+export function leadSessionIdOf(
+  session: unknown,
+  teamOf: (id: string) => TeamView | undefined = () => undefined,
+): string | undefined {
+  if (session === null || typeof session !== 'object') return undefined
+  const id = asString((session as { readonly id?: unknown }).id)
+  if (id === undefined) return undefined
+  const parent = parentTeamSessionIdOf(session)
+  const member = parent === undefined ? undefined : teamOf(parent)?.members.find(candidate => candidate.sessionId === id)
+  return member?.role === 'teammate' && (member.phase === 'active' || member.phase === 'provisioning') ? parent : id
 }

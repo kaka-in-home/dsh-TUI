@@ -597,10 +597,11 @@ export function createChannelProjection(state: ProjectionState, deps: Projection
         // The durable event is the delivery record, so the inbox folds it
         // here — no mailbox polling, no second source of truth.
         if ((event.data.source as { kind: string }).kind === 'team-message') {
+          if (event.seq < (deps.agent().session.inheritedEventCount ?? 0)) break
           // A live delivery is announced (the peer message is otherwise
           // invisible: it is not a human turn, so it never becomes a
           // transcript bubble); a replayed one is folded silently.
-          const recorded = deps.teamInbox?.noteEvent(event.data, { silent: replaying }) === true
+          const recorded = deps.teamInbox?.noteEvent(event.data, { silent: replaying, at: event.time }) === true
           if (recorded && !replaying) {
             const sender = deps.teamInbox?.lastSender()
             if (sender !== undefined) {

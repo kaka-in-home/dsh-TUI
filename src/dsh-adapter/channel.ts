@@ -107,7 +107,7 @@ import {
 } from './sessionTree.js'
 import { getHostSettingsSections, getLocalSettingsSectionsHost, type TuiSettingsSection, type TuiSettingsSectionsRuntime } from './settings-sections.js'
 import { SubagentActivityStore, type SubagentState } from './subagents.js'
-import { leadSessionIdOf, type TeamRuntimeResolver, type TeamStore } from './team-store.js'
+import { leadSessionIdOf, parentTeamSessionIdOf, type TeamPersistenceReader, type TeamRuntimeResolver } from './team-store.js'
 import type { TeamInboxStore } from './team-inbox.js'
 import { getHostThemes, type TuiThemeRuntime } from './themes.js'
 import { attachSessionToWorkspace } from './workspace.js'
@@ -587,102 +587,73 @@ function createChannelWithOwner(
   // owner already makes teardown and construction failure fail closed.
   registerChannelOwner(state, owner)
 
-  // Agent-Team read face. The Team kernel lives in the agent preset's own
-  // isolation realm (see spec/03-architecture.md), so this app cannot and must
-  // not resolve `agentTeams`; it reads the official `agentTeam` Session
-  // projection through the store the composition root passes in. Absent the
-  // store (a bare embed, or a deployment without the Team plugin) every team
-  // accessor answers "no team" and nothing else changes.
+  // The deployment owns the Team runtime; this channel only reads its projection.
   const teamStore = options.teamStore
   const teamInbox = options.teamInbox
-  /**
-   * Publish the team value for the session on screen.
-   *
-   * The projection lives in the Lead (root) session's log only, so a
-   * teammate's own session carries none: the value is resolved by walking to
-   * the parent id — the same walk the official Web UI performs — and, when the
-   * Lead session is not the one attached, seeded through the host's agent
-   * registry so a cold open straight onto a teammate still shows the roster.
-   */
   const refreshTeam = (): void => {
-    if (!owner.current()) return
-    const session = binding.agent.session as unknown
-    const leadId = leadSessionIdOf(session)
-    if (teamInbox !== undefined) teamInbox.setCurrentSession(leadId)
-    if (teamStore === undefined || leadId === undefined) return
-    const attachedId = String((session as { id: unknown }).id)
-    // Reading team state must never take the app down. This runs inside a store
-    // SUBSCRIPTION (the subagent projection's), so a throw here is uncaught and
-    // ends the process — the launcher then offers safe mode. A failed read is a
-    // degraded panel, not a fatal condition, so it is reported and swallowed.
-    try {
-      if (attachedId !== leadId) {
-        const agents = ctx.get('agents') as { get(id: string): { session?: unknown } | undefined } | undefined
-        const lead = agents?.get(leadId)
-        if (lead?.session !== undefined) teamStore.seed(lead.session)
-      }
-      const next = teamStore.get(leadId)
-      if (next === state.team) return
-      state.team = next
-      state.emit()
-    } catch (error) {
-      ctx.logger?.warn?.(
-        'dsh-tui: team state read failed for %s (%s): %o',
-        leadId,
-        attachedId === leadId ? 'self' : 'lead walk',
-        error,
-      )
-    }
+    if (!owner.current() || teamStore === undefined) return
+    const leadId = leadSessionIdOf(binding.agent.session, id => teamStore.get(id))
+    const next = teamStore.get(leadId)
+    if (next === state.team) return
+    state.team = next
+    state.emit()
   }
 
-  /** Panel refresh: re-read from the host registry, then publish. */
-  state.refreshTeamProjection = (): void => {
+  // Seed on binding/manual refresh only. Store notifications must never seed
+  // the store they subscribe to, even if the projected value is unchanged.
+  const seedTeam = (session: unknown): void => {
+    if (!owner.current()) return
+    const id = String((session as { id: unknown }).id)
+    teamInbox?.setCurrentSession(id)
     if (teamStore === undefined) return
-    const session = binding.agent.session as unknown
-    const leadId = leadSessionIdOf(session)
-    if (leadId === undefined) return
-    const attachedId = String((session as { id: unknown }).id)
-    const lead = attachedId === leadId
-      ? session as { id: unknown }
-      : (ctx.get('agents') as { get(id: string): { session?: unknown } | undefined } | undefined)?.get(leadId)?.session
-    if (lead !== undefined) teamStore.seed(lead)
+    const capture = binding.capture()
+    const current = (): boolean => owner.current() && binding.isCurrent(capture)
+    teamStore.setCurrentSession(id)
+    teamStore.seed(session)
+    const parentId = parentTeamSessionIdOf(session)
+    if (parentId !== undefined) {
+      const parent = ctx.get('agents')?.get(SessionId(parentId))
+      if (parent !== undefined) teamStore.seed(parent.session)
+      else {
+        const persistence = ctx.get('sessionPersistence') as TeamPersistenceReader | undefined
+        if (typeof persistence?.open === 'function') {
+          void teamStore.seedStored(parentId, persistence, owner.signal, current)
+            .then(() => { if (current()) refreshTeam() })
+            .catch(error => { if (current()) ctx.logger.warn('dsh-tui: could not read Team parent %s: %o', parentId, error) })
+        }
+      }
+    }
     refreshTeam()
   }
+  state.refreshTeamProjection = (): void => { seedTeam(binding.agent.session) }
 
-  /**
-   * Direct Agent-Team action path.
-   *
-   * The kernel is preset-scoped, so it is resolved per call through the
-   * roster's `serviceFor(agent, …)` — the same seam this channel already uses
-   * for `skills` and `compaction` (see `presets.ts`). Resolving per call keeps
-   * it correct across `/preset` switches and session adoption, and a
-   * composition without a roster simply answers `unavailable`, which the UI
-   * turns into one ordinary Lead turn.
-   */
   if (teamStore !== undefined) {
     owner.own(teamStore.subscribe(refreshTeam))
-    // Live turn status: a teammate's `running`/`idle` turn comes from the
-    // subagent projection, not from a team event, so the roster re-projects
-    // whenever a child epoch starts or settles. Only the current session's
-    // team is published (refreshTeam), so this never re-renders for a team the
-    // user is not looking at.
     const resolveRuntime: TeamRuntimeResolver = (sessionId) => {
-      const child = subagentProjection.store.findBySessionId(sessionId)
-      if (child === undefined) return undefined
+      const live = ctx.get('agents')?.get(SessionId(sessionId))
+      const child = subagentProjection.findBySessionId(sessionId)
+      if (live === undefined && child === undefined) return undefined
+      const model = live?.session.requestContext?.()?.model ?? live?.options?.model ?? child?.model
+      const status = live?.status ?? child?.status
       return {
-        agentId: child.agentId,
-        turn: child.status === 'running' || child.status === 'starting' ? 'running' : 'idle',
-        ...(child.model === undefined ? {} : { model: child.model }),
-        ...(child.description === undefined ? {} : { description: child.description }),
+        agentId: String(live?.id ?? child!.agentId),
+        turn: status === 'running' || status === 'starting' ? 'running' : status === 'idle' ? 'idle' : 'unknown',
+        ...(model === undefined ? {} : { model }),
+        ...(child?.description === undefined ? {} : { description: child.description }),
       }
     }
-    teamStore.setRuntimeResolver(resolveRuntime)
-    owner.own(subagentProjection.store.subscribe(() => {
+    const refreshRuntime = (): void => {
       if (!owner.current()) return
       teamStore.setRuntimeResolver(resolveRuntime)
       refreshTeam()
-    }))
+    }
+    refreshRuntime()
+    owner.own(subagentProjection.subscribe(refreshRuntime))
+    owner.own(ctx.on('agent/status', refreshRuntime))
+    owner.own(ctx.on('agent/created', () => { refreshRuntime(); return undefined }))
+    owner.own(ctx.on('agent/disposed', refreshRuntime))
   }
+
   if (teamInbox !== undefined) {
     owner.own(teamInbox.subscribe(() => {
       if (!owner.current()) return
@@ -837,6 +808,8 @@ function createChannelWithOwner(
   // (`subagent/catalog`, workflow member edges) so a resumed session keeps
   // its dispatched-children history (issue #966).
   const replaySessionSeed = (events: readonly SessionEvent[]): void => {
+    teamInbox?.setCurrentSession(String(binding.agent.session.id))
+    teamInbox?.reset()
     projector.replayEvents(events)
     subagentProjection.bootstrapFromLog(events)
   }
@@ -916,10 +889,7 @@ function createChannelWithOwner(
     binding,
     state,
     seedActivity: options.seedActivity,
-    seedTeam: session => {
-      options.seedTeam?.(session)
-      refreshTeam()
-    },
+    seedTeam,
     inputConvergence,
     selection,
     modelActions,

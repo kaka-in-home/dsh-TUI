@@ -129,6 +129,8 @@ assert.deepEqual(enriched.tasks[0].blockedBy, ['1', '2'])
 assert.deepEqual(enriched.tasks[0].writeScopeWarnings, ['src overlaps'])
 assert.equal(projectTeamView({ members: [] }), undefined, 'a value without both arrays is not a team view')
 assert.equal(projectTeamView(null), undefined)
+assert.deepEqual(projectTeamView({ members: [{ id: 'unknown', name: 'unknown', role: 'other-role', phase: 'active' }], tasks: [] }).members, [],
+  'unknown roles must not invent teammate membership')
 assert.equal(projectTeamView({ members: [], tasks: [], failure: 'bad row' }).failure, 'bad row')
 
 // ── 2. store: feed, seed, resolver, current session ─────────────────────────
@@ -194,7 +196,8 @@ assert.equal(storeNotifications, beforeOff, 'an unsubscribed listener is never c
 
 // ── 3. Lead walk ────────────────────────────────────────────────────────────
 
-assert.equal(leadSessionIdOf(teammateSession), 'session-lead')
+const teamOf = (id: string) => registryStore.get(id)
+assert.equal(leadSessionIdOf(teammateSession, teamOf), 'session-lead')
 assert.equal(leadSessionIdOf(leadSession), 'session-lead')
 assert.equal(leadSessionIdOf(undefined), undefined,
   'a missing session resolves nothing')
@@ -203,15 +206,27 @@ assert.equal(leadSessionIdOf(undefined), undefined,
 // nothing at all) silently returns the teammate's OWN id, whose log carries no
 // team — which is exactly the "panel turns into the subagent dashboard as soon
 // as you open a member" bug. Pin both, and pin that the header wins.
-assert.equal(leadSessionIdOf({ id: 'session-rev', header: { parentSession: 'session-lead' } }), 'session-lead',
+assert.equal(leadSessionIdOf({ id: 'session-rev', header: { parentSession: 'session-lead' } }, teamOf), 'session-lead',
   'a real teammate Session resolves to its Lead through header.parentSession')
 assert.equal(leadSessionIdOf({ id: 'session-rev', header: {} }), 'session-rev',
   'a root Session resolves to itself')
 assert.equal(
-  leadSessionIdOf({ id: 'session-rev', header: { parentSession: 'session-lead' }, subagent: { address: { parentSessionId: 'session-other' } } }),
+  leadSessionIdOf({ id: 'session-rev', header: { parentSession: 'session-lead' }, subagent: { address: { parentSessionId: 'session-other' } } }, teamOf),
   'session-lead',
   'the session header is authoritative over the subagent catalog record',
 )
+
+assert.equal(leadSessionIdOf({ id: 'ordinary-fork', header: { parentSession: 'session-lead' } }, teamOf), 'ordinary-fork',
+  'parent lineage alone cannot make an ordinary child a Team member')
+let repeatedSeeds = 0
+const stopRepeated = registryStore.subscribe(() => {
+  repeatedSeeds++
+  assert.ok(repeatedSeeds < 3, 'an unchanged snapshot must not recursively notify')
+  registryStore.seed(leadSession)
+})
+registryStore.seed(leadSession)
+assert.equal(repeatedSeeds, 0, 're-reading the same projection is silent')
+stopRepeated()
 
 // ── 4. inbox ────────────────────────────────────────────────────────────────
 

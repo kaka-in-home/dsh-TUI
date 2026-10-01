@@ -1,4 +1,5 @@
 import React from 'react'
+import type { DOMElement } from '../ink/dom.js'
 import { Box, Text, useInput, ScrollBox, type ScrollBoxHandle, useTerminalSize, useAnimationFrame } from '../ui.js'
 import type { TeamMemberRow, TeamMessageRow, TeamTaskRow, TeamView } from '../dsh-adapter/channel.js'
 import type { Theme } from '../theme.js'
@@ -95,14 +96,15 @@ function timeOf(ms: number): string {
 }
 
 /** `⬢ name` plus the `current` / `lead` markers and the live turn word. */
-function MemberRow({ member, focused, labelWidth }: {
+function MemberRow({ member, focused, labelWidth, rowRef }: {
   member: TeamMemberRow
   focused: boolean
   labelWidth: number
+  rowRef?: React.Ref<DOMElement>
 }): React.ReactNode {
   const info = statusInfo(member)
   return (
-    <Box flexDirection="column">
+    <Box ref={rowRef} flexDirection="column">
       <Box flexDirection="row" gap={1}>
         <Text color={focused ? 'accent' : undefined}>{focused ? '❯' : ' '}</Text>
         <Text color={info.color}>{info.glyph}</Text>
@@ -139,14 +141,15 @@ function clipText(text: string, maxWidth: number): string {
   return clipLine(text.replace(/\s+/gu, ' ').trim(), maxWidth)
 }
 
-function TaskRow({ task, focused, labelWidth }: {
+function TaskRow({ task, focused, labelWidth, rowRef }: {
   task: TeamTaskRow
   focused: boolean
   labelWidth: number
+  rowRef?: React.Ref<DOMElement>
 }): React.ReactNode {
   const info = taskState(task)
   return (
-    <Box flexDirection="column">
+    <Box ref={rowRef} flexDirection="column">
       <Box flexDirection="row" gap={1}>
         <Text color={focused ? 'accent' : undefined}>{focused ? '❯' : ' '}</Text>
         <Text color={info.color}>{info.glyph}</Text>
@@ -182,7 +185,7 @@ function TaskRow({ task, focused, labelWidth }: {
 }
 
 /**
- * `/team` overlay panel — the TUI counterpart of the official Web team panel:
+ * Agent-Team overlay panel — the TUI counterpart of the official Web team panel:
  * the roster, the shared task board, and the teammate messages this session
  * received. READ-ONLY by design: the team is created and driven by the model
  * through the official Team tools, exactly as the Web UI does it — the panel
@@ -204,6 +207,7 @@ export function TeamPanel({
   onRefresh,
 }: TeamPanelProps): React.ReactNode {
   const scrollRef = React.useRef<ScrollBoxHandle | null>(null)
+  const focusedRowRef = React.useRef<DOMElement | null>(null)
   const { rows, columns } = useTerminalSize()
   // 1s tick keeps the elapsed column live while the panel is open; the ref
   // rides the root box so a closed panel stops the interval.
@@ -211,23 +215,40 @@ export function TeamPanel({
   const members = team?.members ?? []
   const tasks = team?.tasks ?? []
   const rowCount = page === 'members' ? members.length : page === 'tasks' ? tasks.length : messages.length
-  const focus = Math.min(focusIndex, Math.max(0, rowCount - 1))
+  const focus = Math.max(0, Math.min(focusIndex, Math.max(0, rowCount - 1)))
   const focusedMember = page === 'members' ? members[focus] : undefined
   const labelWidth = Math.max(20, (columns ?? 80) - 24)
 
+  React.useEffect(() => {
+    // Expanded rows have different heights. Anchor the actual focused row,
+    // rather than moving one terminal line for each logical row.
+    if (focusedRowRef.current !== null) {
+      scrollRef.current?.scrollToElement(focusedRowRef.current, -2)
+    }
+  }, [page, focus, rowCount, rows, columns])
+
   const move = (delta: number): void => {
-    const next = Math.min(rowCount - 1, Math.max(0, focus + delta))
-    onFocus(next)
-    scrollRef.current?.scrollBy(delta)
+    if (rowCount === 0) return
+    onFocus(Math.min(rowCount - 1, Math.max(0, focus + delta)))
   }
 
   useInput((input, key, event) => {
     // The panel is read-only: every branch only moves the cursor, switches the
     // page, opens a session, re-reads, or closes. Team mutations belong to the
     // model through the official Team tools.
-    if (key.escape || (key.ctrl && input === 'c')) {
+    if (key.isPasted) {
+      event.stopImmediatePropagation()
+      return
+    }
+    // Escape is reported with meta on some terminals; keep it separate from
+    // modifier-free navigation and the explicit Ctrl+C close binding.
+    if (key.escape || (key.ctrl && !key.meta && !key.super && !key.shift && input.toLowerCase() === 'c')) {
       event.stopImmediatePropagation()
       onClose()
+      return
+    }
+    if (key.ctrl || key.meta || key.super || key.shift) {
+      event.stopImmediatePropagation()
       return
     }
     if (key.upArrow || input === 'k') {
@@ -301,7 +322,7 @@ export function TeamPanel({
       )}
 
       <Box flexDirection="column" maxHeight={Math.max(8, rows - 12)} marginTop={1}>
-        <ScrollBox ref={scrollRef} flexDirection="column" flexGrow={1}>
+        <ScrollBox key={page} ref={scrollRef} flexDirection="column" flexGrow={1}>
           {rowCount === 0
             ? (
                 <Box flexDirection="column" alignItems="center" marginTop={Math.max(1, Math.floor((rows - 18) / 3))}>
@@ -314,14 +335,14 @@ export function TeamPanel({
               )
             : page === 'members'
               ? members.map((member, index) => (
-                  <MemberRow key={member.sessionId} member={member} focused={index === focus} labelWidth={labelWidth} />
+                  <MemberRow key={member.sessionId} member={member} focused={index === focus} labelWidth={labelWidth} rowRef={index === focus ? focusedRowRef : undefined} />
                 ))
               : page === 'tasks'
                 ? tasks.map((task, index) => (
-                    <TaskRow key={task.id} task={task} focused={index === focus} labelWidth={labelWidth} />
+                    <TaskRow key={task.id} task={task} focused={index === focus} labelWidth={labelWidth} rowRef={index === focus ? focusedRowRef : undefined} />
                   ))
                 : messages.map((message, index) => (
-                    <Box key={message.id} flexDirection="column">
+                    <Box key={message.id} ref={index === focus ? focusedRowRef : undefined} flexDirection="column">
                       <Box flexDirection="row" gap={1}>
                         <Text color={index === focus ? 'accent' : undefined}>{index === focus ? '❯' : ' '}</Text>
                         <Text bold color={index === focus ? 'accent' : undefined}>{`@${message.senderName}`}</Text>

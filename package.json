@@ -201,6 +201,8 @@
     "verify:semantic-copy": "node --import tsx/esm scripts/verify-semantic-copy.tsx",
     "verify:btw": "node --import tsx/esm scripts/verify-btw.tsx",
     "verify:team-agents": "node --import tsx/esm scripts/verify-team-agents.tsx",
+    "verify:team-binding": "node --import tsx/esm scripts/verify-team-binding.ts",
+    "verify:team-panel": "node --import tsx/esm scripts/verify-team-panel.tsx",
     "verify:team-contract": "node --import tsx/esm scripts/verify-team-contract.ts",
     "verify:team-subagent-boundary": "node --import tsx/esm scripts/verify-team-subagent-boundary.ts",
     "verify:adapter-skeleton": "node --import tsx/esm scripts/verify-adapter-skeleton.ts",

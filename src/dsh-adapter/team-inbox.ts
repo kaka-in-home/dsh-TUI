@@ -3,7 +3,7 @@
  *
  * A peer message reaches the target session as a durable `user/message` with
  * source `{ kind: 'team-message', senderName, … }` (the Team kernel's
- * `TeamMessageSource`). That event is the SENDER's own durable record of the
+ * `TeamMessageSource`). That event is the RECIPIENT's durable record of the
  * delivery, so this store folds the session's own log and never polls the team
  * mailbox — the log stays the single source of truth.
  *
@@ -20,7 +20,7 @@ export interface TeamMessageRow {
   readonly id: string
   readonly senderName: string
   readonly text: string
-  /** Wall clock the event was folded (log order is the ordering guarantee). */
+  /** Original event time; log order remains the ordering guarantee. */
   readonly at: number
 }
 
@@ -75,25 +75,17 @@ export function asTeamMessage(
 /** Ordered, bounded, de-duplicated inbox for one session. */
 export class TeamInboxStore {
   private rows: readonly TeamMessageRow[] = []
-  /** Lead session this inbox is bound to (see {@link setCurrentSession}). */
+  /** Recipient session whose own log is being displayed. */
   private currentId: string | undefined
   /** Messages folded since the last {@link markRead}. */
   private unreadCount = 0
   private readonly seen = new Set<string>()
   private readonly listeners = new Set<() => void>()
 
-  /**
-   * Mark which Lead session the inbox belongs to.
-   *
-   * The store is per displayed session: a rebind to another session (or its
-   * Lead) must not carry the previous session's messages into the panel. The
-   * comparison is on the resolved Lead id, so entering and leaving a teammate
-   * view of the same team keeps the inbox.
-   * @param leadSessionId - Lead session id, or undefined when unknown.
-   */
-  setCurrentSession(leadSessionId: string | undefined): void {
-    if (this.currentId === leadSessionId) return
-    this.currentId = leadSessionId
+  /** Bind to the recipient before folding its log; teammates do not share inboxes. */
+  setCurrentSession(sessionId: string | undefined): void {
+    if (this.currentId === sessionId) return
+    this.currentId = sessionId
     this.reset()
   }
 
@@ -108,12 +100,12 @@ export class TeamInboxStore {
    * @param options - `silent` for replay-folded events.
    * @returns true when a new message was recorded.
    */
-  noteEvent(data: unknown, options: { readonly silent?: boolean } = {}): boolean {
+  noteEvent(data: unknown, options: { readonly silent?: boolean; readonly at?: number } = {}): boolean {
     const message = asTeamMessage(data)
     if (message === undefined) return false
     if (this.seen.has(message.id)) return false
     this.seen.add(message.id)
-    const next = [...this.rows, { ...message, at: Date.now() }]
+    const next = [...this.rows, { ...message, at: options.at ?? Date.now() }]
     this.rows = next.length > MAX_MESSAGES ? next.slice(next.length - MAX_MESSAGES) : next
     if (options.silent !== true) this.unreadCount += 1
     this.emit()

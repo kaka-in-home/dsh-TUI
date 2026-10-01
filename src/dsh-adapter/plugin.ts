@@ -560,10 +560,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // soon as this session binds so a resumed or reattached session renders its
     // line immediately instead of waiting for the next event.
     seedActivity: session => activityStore.seed(session),
-    // Same reason for the team value: the projection only pushes on change,
-    // and it lives in the Lead session's log, so a teammate's own session
-    // resolves its team by walking to the parent.
-    seedTeam: session => teamStore.seed(session),
     teamStore,
     teamInbox,
     // A RESUMED session keeps its persisted header cwd (issue #96 review):

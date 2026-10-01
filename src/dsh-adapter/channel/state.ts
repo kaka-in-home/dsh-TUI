@@ -18,11 +18,6 @@ export interface ChannelLaunchOptions {
    *  projection value only arrives on change, so a resumed session needs this
    *  read to render its line before the next event lands. */
   seedActivity?: (session: unknown) => void
-  /** Read the agent-team projection's current value when a session binds, and
-   *  return the value for the session on screen. The team projection lives in
-   *  the Lead (root) session's log, so a teammate's own session resolves its
-   *  team by walking to the parent (see `leadSessionIdOf`). */
-  seedTeam?: (session: unknown) => void
   /** Agent-Team read face (official `agentTeam` Session projection). Absent
    *  when the composition has no team plugin: the UI then reports "no team"
    *  instead of inventing one. */

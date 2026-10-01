@@ -1,19 +1,8 @@
 /**
- * Does the SUBAGENT layer already cover Agent Teams?
- *
- * The hypothesis to test: teammates are continuable subagents, so maybe the
- * TUI's existing subagent module already observes them and "absorbed" part of
- * the feature. This probe answers it with the kernel's own behaviour:
- *
- *  1. mount the real Team kernel in its own realm with a stubbed host;
- *  2. record exactly what the kernel hands to `ctx.subagents.startContinuable`
- *     when a teammate is created;
- *  3. compare that with what the team projection publishes for the same member
- *     (its id, name, role);
- *  4. and with what the subagent CATALOG entry can carry (childId, mode,
- *     label) — i.e. everything the TUI's subagent module can ever learn.
- *
- * Run after build: `node --import tsx/esm scripts/verify-team-subagent-boundary.ts`.
+ * Observe the real Team kernel's spawn request and durable member transitions.
+ * The subagent provider is stubbed: this gate proves the provider/session-id
+ * join used by the TUI, not what every upstream catalog schema may contain.
+ * Run: node --import tsx/esm scripts/verify-team-subagent-boundary.ts
  */
 import assert from 'node:assert/strict'
 import { Context } from '@deepseek-ai/cordis'
@@ -103,17 +92,8 @@ try {
   })
   await root.plugin(SessionProjectionRegistry)
 
-  const group = root.isolate('agentTeams').isolate('workflowEngine')
-  const kernelFiber = await group.plugin(TeamKernel, {
-    maxMembers: 8,
-    maxTasks: 256,
-    maxPendingMessagesPerMember: 64,
-    maxMessageBytes: 65536,
-    disposalTimeoutMs: 5000,
-  })
-  await kernelFiber
-
-  const service = group.get('agentTeams')
+  const kernelFiber = await root.plugin(TeamKernel)
+  const service = root.get('agentTeams')
   const result = await service.spawnTeammate(leadAgent, {
     name: 'reviewer',
     description: 'Reviews the diff',
@@ -130,7 +110,6 @@ try {
   assert.equal(call.label, 'Reviews the diff', 'the subagent layer receives the member DESCRIPTION as the label')
   assert.equal(call.request.parent, leadAgent, 'the Lead is the delegating parent, so the child is scopable to it')
   assert.equal(typeof call.childId, 'string')
-  assert.equal(call.label === 'reviewer', false, 'the teammate NAME is never handed to the subagent layer')
 
   // ── what the TEAM layer publishes for the same member ───────────────────
   assert.equal(result.member.name, 'reviewer')
@@ -152,23 +131,14 @@ try {
   assert.equal(teamEvents[0].data.member.name, 'reviewer')
   assert.equal(teamEvents[0].data.member.id, call.childId)
   assert.equal(teamEvents[0].data.teamId, 'session-lead')
-  // The subagent layer never sees a team event: `team/*` lives in the Lead log
-  // and the child's own log has only the prompt it was started with.
+  // The kernel itself writes its member transitions to the Lead log. This
+  // provider stub only accepts the child prompt; it does not write a catalog.
   assert.ok(!appended.some(entry => entry.type.startsWith('subagent/')),
     'the kernel emits no subagent/catalog entry of its own: that is the subagent provider\'s job')
-
-  // ── what a subagent CATALOG entry can carry (the TUI's view) ─────────────
-  // Schema from @deepseek-ai/dsh-subagent/.../catalog.d.ts: childId,
-  // childCreatedAt, mode, label — nothing about name, role, roster or tasks.
-  const catalogEntryFields = ['childId', 'childCreatedAt', 'version', 'mode', 'label']
-  for (const absent of ['name', 'role', 'teamId', 'phase']) {
-    assert.ok(!catalogEntryFields.includes(absent),
-      `a catalog entry has no "${absent}", so the subagent module cannot render team identity`)
-  }
 
   await kernelFiber.dispose()
 } finally {
   await root.fiber.dispose()
 }
 
-console.log('verify-team-subagent-boundary OK (teammates ride the subagent layer for liveness, but name/role/roster/tasks exist only in the team projection)')
+console.log('verify-team-subagent-boundary OK (real kernel spawn request, provider/session join, durable provisioning/active member transitions)')

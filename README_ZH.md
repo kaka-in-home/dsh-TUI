@@ -36,7 +36,7 @@
 - **DSH 集成** — presets、技能、MCP、目标、待办、子代理、问卷。
 - **账号登录** — 标准 profile 提供 pi-ai 的 ChatGPT/Codex、Claude、Grok OAuth（可用时还有 OpenAI 直连与 Meta Muse）；DSH 0.2.0-rc.1+ 还通过宿主服务提供 DeepSeek 浏览器登录，路由为 `deepseek-account`。通过 `/provider` 或 `/auth` 使用，无需另装插件。
   仅更新 profile 而留下已挂载 `dsh-tui-auth` 的旧全局 TUI 补丁时，本地登录也会按需启动官方 loopback 回调监听器；SSH 固定端口转发仍需对齐全局安装包。
-- **agent-team（Agent Teams）** — `Ctrl+A` 打开面板：本会话有队友时是团队面板（花名册 / 共享任务板 / 队友收件箱），`Enter` 切到成员自己的会话；没有队友时保持原来的子代理面板。分流读的是持久团队记录（真 `spawn_teammate` 写下的 `team/member` 事件），不是 preset，也不是能力探测。团队由部署方组合，不由本插件组合：在你的 profile 里启用 Agent Teams 即可（官方 `@deepseek-ai/dsh-experimental-agent-team-profile` 层会把内核和它的工具插在组合根上，两个包也由它带来）。没有 `/team` 命令：面板是本插件唯一的团队部件，读的是官方 `agentTeam` 会话投影——团队本身由模型通过官方 Team 工具创建和指挥。没加载那一层时面板就是空的，并会说明原因，其余功能一概不受影响。状态栏带 `⬢ n` 徽标。
+- **Agent Teams** — `Ctrl+A` 按当前会话的官方团队名册分流：有队友时打开团队面板（成员 / 共享任务 / 当前成员的收件箱），否则打开子代理面板。`Enter` 可进入队友会话，也可从队友会话返回 Lead；成员视图继续读取同一份 Lead 团队日志，收件箱则各自独立。面板显示成员的实时状态和可用的模型信息，状态栏带 `⬢ n` 徽标；问卷和审批出现时会优先显示。团队运行期由部署方通过官方 `@deepseek-ai/dsh-experimental-agent-team-profile` 或自定义组合启用，本插件只消费官方 `agentTeam` 投影和持久消息，不提供额外的团队 preset 或 `/team` 命令。
 - **扩展** — 浏览器交互、computer use 等。
 - **为长会话设计** — 事件驱动投影、虚拟化、有界缓存。
 
